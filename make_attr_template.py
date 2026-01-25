@@ -2,26 +2,26 @@ import os
 import glob
 import csv
 
-# 이미지 위치 (이미 YOLO 학습에 사용한 train/val 기준)
+# Image locations (based on train/val used for YOLO training)
 BASE_DIR = "yolov12/data/fridge_attr10"
 TRAIN_IMG_DIR = os.path.join(BASE_DIR, "images", "train")
 VAL_IMG_DIR = os.path.join(BASE_DIR, "images", "val")
 
 OUT_CSV = "fridge_attr10_labels.csv"
 
-# 여기서 attr 10개 이름을 먼저 정의해두자.
-# 나중에 실제 의미(전력, 열전도율, 냉매종류...)를 이 이름에 매핑해서 쓰면 됨.
+# Define the 10 attr names here first.
+# Later map real meanings (power, U-value, refrigerant type...) to these names.
 ATTR_COLUMNS = [
-    "attr1_power_kw",        # 예: 정격 소비전력 (kW)
-    "attr2_u_value",         # 예: 열관류율 (W/m2K)
-    "attr3_internal_volume", # 예: 내부 용적 (L)
-    "attr4_temp_class",      # 예: 온도 클래스 (0~N, 분류)
-    "attr5_refrigerant",     # 예: 냉매 종류 (0=R404A, 1=R134a, ...)
-    "attr6_door_type",       # 예: 도어 타입 (0=슬라이딩, 1=스윙, ...)
-    "attr7_cabinet_type",    # 예: 쇼케이스 타입 (0=수직형, 1=대면형, ...)
-    "attr8_year",            # 예: 제조연도 (회귀/분류 둘 다 가능)
-    "attr9_insulation_type", # 예: 단열재 타입
-    "attr10_misc",           # 예: 기타 임의 속성
+    "attr1_power_kw",        # e.g., rated power consumption (kW)
+    "attr2_u_value",         # e.g., U-value (W/m2K)
+    "attr3_internal_volume", # e.g., internal volume (L)
+    "attr4_temp_class",      # e.g., temperature class (0~N, classification)
+    "attr5_refrigerant",     # e.g., refrigerant type (0=R404A, 1=R134a, ...)
+    "attr6_door_type",       # e.g., door type (0=sliding, 1=swing, ...)
+    "attr7_cabinet_type",    # e.g., showcase type (0=vertical, 1=island, ...)
+    "attr8_year",            # e.g., manufacture year (regression or classification)
+    "attr9_insulation_type", # e.g., insulation type
+    "attr10_misc",           # e.g., other arbitrary attribute
 ]
 
 def collect_images(img_dir):
@@ -45,7 +45,7 @@ def main():
         print("No images found. Check paths.")
         return
 
-    # CSV 헤더: split, image_name, attr1..10
+    # CSV header: split, image_name, attr1..10
     fieldnames = ["split", "image_name"] + ATTR_COLUMNS
 
     if os.path.exists(OUT_CSV):
@@ -57,7 +57,7 @@ def main():
         writer.writeheader()
         for r in rows:
             for a in ATTR_COLUMNS:
-                r[a] = ""  # 나중에 수동으로 채울 칸
+                r[a] = ""  # Fields to fill manually later
             writer.writerow(r)
 
     print(f"[OK] Wrote template CSV: {OUT_CSV}")

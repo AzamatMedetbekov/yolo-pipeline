@@ -2,20 +2,20 @@ from ultralytics import YOLO
 import os
 
 # ==========================
-# 설정값 한 군데 모아두기
+# Gather settings in one place
 # ==========================
-# YOLOv12 repo 안의 세그멘테이션 base 모델
-BASE_MODEL = "yolov12/yolov12s-seg.pt"   # 처음에는 COCO 사전학습 모델에서 시작
-# 나중에 fine-tune 이어갈 땐 예: "yolov12/runs/segment/train/weights/best.pt"
+# Segmentation base model in YOLOv12 repo
+BASE_MODEL = "yolov12/yolov12s-seg.pt"   # Start from COCO pretrained weights
+# To continue fine-tuning later, e.g.: "yolov12/runs/segment/train/weights/best.pt"
 
-DATA_YAML = "fridge_attr10.yaml"        # 방금 만든 data yaml (YoloProject 기준)
+DATA_YAML = "fridge_attr10.yaml"        # Data yaml just created (relative to YoloProject)
 EPOCHS = 50
 IMG_SIZE = 640
 BATCH_SIZE = 4
-DEVICE = "0"                          # 나중에 GPU 맞춰지면 "0" 같은 걸로
+DEVICE = "0"                          # Use "0" when GPU is set up
 
-PROJECT = "yolov12/runs"               # YOLO가 결과 저장할 기본 폴더
-NAME = "fridge_seg_attr10"             # 이번 실험 이름
+PROJECT = "yolov12/runs"               # Default folder for YOLO outputs
+NAME = "fridge_seg_attr10"             # Experiment name
 
 def main():
     print("=== YOLOv12 Fridge Seg Training ===")
@@ -24,10 +24,10 @@ def main():
     print(f"Epochs: {EPOCHS}, ImgSize: {IMG_SIZE}, Batch: {BATCH_SIZE}")
     print(f"Device: {DEVICE}")
 
-    # 모델 로드
+    # Load model
     model = YOLO(BASE_MODEL)
 
-    # 학습 호출
+    # Start training
     model.train(
         task="segment",
         data=DATA_YAML,

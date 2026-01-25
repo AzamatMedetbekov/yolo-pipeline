@@ -9,16 +9,16 @@ from torchvision import models, transforms
 from PIL import Image
 
 # ============================
-# 설정
+# Settings
 # ============================
 BASE_DIR = "yolov12/data/fridge_attr10"
 IMG_BASE_DIR = os.path.join(BASE_DIR, "images")
 CSV_PATH = "fridge_attr10_labels.csv"
 
-# 어떤 attr이 regression / classification 인지 정의
-# 너무 크기가 큰 attr는 스케일 조정 및 translation
+# Define which attrs are regression / classification
+# Scale/shift very large attrs
 REG_SCALE = {
-    "attr3_internal_volume": 1000.0,  # L → 0~2 정도
+    "attr3_internal_volume": 1000.0,  # L -> around 0-2
     "attr8_year": 50.0,               # (year - 2000) / 50
 }
 REG_SHIFT = {
@@ -44,7 +44,7 @@ CLS_ATTRS: Dict[str, int] = {
 
 IMG_SIZE = 224
 BATCH_SIZE = 4
-EPOCHS = 200  # 오버피팅 테스트이니까 좀 크게
+EPOCHS = 200  # Set high for overfitting test
 LR = 1e-3
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -76,7 +76,7 @@ class FridgeAttrDataset(Dataset):
 
         self.rows = rows
 
-        # regression / classification 컬럼 존재 여부 체크
+        # Check presence of regression / classification columns
         for col in REG_ATTRS:
             if col not in self.rows[0]:
                 raise KeyError(f"Missing regression column: {col}")
@@ -110,7 +110,7 @@ class FridgeAttrDataset(Dataset):
 
         y_reg = torch.tensor(reg_vals, dtype=torch.float32)
 
-        # classification target들: attr별로 LongTensor
+        # Classification targets: LongTensor per attr
         y_cls = {}
         for col in CLS_ATTRS.keys():
             v = int(r[col])
@@ -161,12 +161,12 @@ class AttrNet(nn.Module):
 
 
 # ============================
-# 학습 루프
+# Training loop
 # ============================
 
 def print_loss_table(title, names, train_losses, val_losses):
     print(f"\n[{title}]")
-    # attr 이름 컬럼 길이 자동 조절
+    # Auto-adjust attr name column width
     col1_w = max(len("attr"), max(len(n) for n in names))
     header = f"{'attr'.ljust(col1_w)} | {'train':>10} | {'val':>10}"
     print(header)
@@ -177,7 +177,7 @@ def print_loss_table(title, names, train_losses, val_losses):
         print(f"{name.ljust(col1_w)} | {t:10.4f} | {v:10.4f}")
 
 def train():
-    # ----- 데이터셋 / 로더 -----
+    # ----- Dataset / loader -----
     tfm = transforms.Compose([
         transforms.Resize((IMG_SIZE, IMG_SIZE)),
         transforms.ToTensor(),
@@ -207,7 +207,7 @@ def train():
         model.train()
         train_total_sum = 0.0
 
-        # attr별 누적 (train)
+        # Per-attr accumulation (train)
         train_reg_sums = {name: 0.0 for name in REG_ATTRS}
         train_cls_sums = {name: 0.0 for name in CLS_ATTRS.keys()}
 
@@ -224,21 +224,21 @@ def train():
 
             loss = 0.0
 
-            # ---- 회귀 (train) ----
+            # ---- Regression (train) ----
             if "reg" in out:
                 pred_reg = out["reg"]      # (B, D)
                 diff = pred_reg - y_reg    # (B, D)
-                # 전체 회귀 loss (MSE)
+                # Overall regression loss (MSE)
                 loss_reg = (diff * diff).mean()
 
-                # attr별 MSE
+                # Per-attr MSE
                 per_dim_mse = (diff * diff).mean(dim=0)  # (D,)
                 for i, name in enumerate(REG_ATTRS):
                     train_reg_sums[name] += per_dim_mse[i].item() * bs
 
                 loss = loss + loss_reg
 
-            # ---- 분류 (train) ----
+            # ---- Classification (train) ----
             loss_cls_sum = 0.0
             for name, head_out in out["cls"].items():
                 target = y_cls[name]
@@ -278,7 +278,7 @@ def train():
 
                 loss = 0.0
 
-                # ---- 회귀 (val) ----
+                # ---- Regression (val) ----
                 if "reg" in out:
                     pred_reg = out["reg"]
                     diff = pred_reg - y_reg
@@ -290,7 +290,7 @@ def train():
 
                     loss = loss + loss_reg
 
-                # ---- 분류 (val) ----
+                # ---- Classification (val) ----
                 loss_cls_sum = 0.0
                 for name, head_out in out["cls"].items():
                     target = y_cls[name]
@@ -311,7 +311,7 @@ def train():
         print(f"\n========== Epoch {epoch}/{EPOCHS} ==========")
         print(f"Total loss: train={avg_train_total:.4f}  val={avg_val_total:.4f}")
 
-        # 회귀 attr 가로표
+        # Regression attr table
         print_loss_table(
             title="Reg Attr Losses",
             names=REG_ATTRS,
@@ -319,7 +319,7 @@ def train():
             val_losses=avg_val_reg,
         )
 
-        # 분류 attr 가로표
+        # Classification attr table
         print_loss_table(
             title="Cls Attr Losses",
             names=list(CLS_ATTRS.keys()),
@@ -327,7 +327,7 @@ def train():
             val_losses=avg_val_cls,
         )
 
-    # 모델 저장
+    # Save model
     os.makedirs("attr_runs", exist_ok=True)
     save_path = os.path.join("attr_runs", "attrnet_fridge10.pt")
     torch.save({

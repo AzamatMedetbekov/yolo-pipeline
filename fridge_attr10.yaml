@@ -1,7 +1,7 @@
-# YoloProject 기준 위치
-path: yolov12/data/fridge_attr10   # 이미지/라벨이 있는 폴더
+# Location relative to YoloProject
+path: yolov12/data/fridge_attr10   # Folder with images/labels
 
-# 절대경로로 넣어야함. (원래대로라면, data 안에 넣어둬야하는데, 밖에서 관리하기 때문임)
+# Must use absolute paths. (Normally inside data, but managed externally here.)
 train: /workspace/d/asy_folder/ImageDetectionRef/YoloProject/yolov12/data/fridge_attr10/images/train
 val: /workspace/d/asy_folder/ImageDetectionRef/YoloProject/yolov12/data/fridge_attr10/images/val
 

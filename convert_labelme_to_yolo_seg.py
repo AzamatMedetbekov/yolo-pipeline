@@ -3,10 +3,10 @@ import json
 import glob
 import cv2
 
-# 클래스 맵 (지금은 showcase 하나만)
+# Class map (for now only showcase)
 CLASS_MAP = {
     "showcase": 0,
-    # 나중에 "upright": 1, "coldroom": 2 이런 식으로 추가
+    # Later add like: "upright": 1, "coldroom": 2
 }
 
 BASE_DIR = "yolov12/data/fridge_attr10"
@@ -47,17 +47,17 @@ for jp in json_paths:
 
         pts = []
         for x, y in shape["points"]:
-            # 0~1로 정규화
+            # Normalize to 0-1
             nx = x / w
             ny = y / h
-            # YOLO 포맷은 [0,1] 범위를 기대하므로 클램핑
+            # YOLO format expects [0,1], so clamp
             nx = max(0.0, min(1.0, nx))
             ny = max(0.0, min(1.0, ny))
             pts.append(f"{nx:.6f}")
             pts.append(f"{ny:.6f}")
 
         if len(pts) < 6:
-            # 포인트가 3개 미만이면 폴리곤 안 됨
+            # Fewer than 3 points is not a polygon
             print(f"[WARN] too few points in {jp}, label={label}")
             continue
 

@@ -1,0 +1,17 @@
+# Core dependencies for YOLOv12 Fridge Segmentation Pipeline
+
+# Deep Learning
+ultralytics>=8.0.0
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Image Processing
+opencv-python>=4.8.0
+Pillow>=10.0.0
+
+# Data Processing
+numpy>=1.24.0
+pyyaml>=6.0
+
+# Optional: Gradio for web demo
+gradio>=4.0.0

@@ -8,11 +8,15 @@ env/
 
 # Model weights and training artifacts
 /attr_runs/
+runs/
+yolov12/runs/
+weights/
 *.pt
 *.pth
 *.onnx
 *.engine
 *.tflite
+*.cache
 
 # Python
 __pycache__/
@@ -50,3 +54,4 @@ Thumbs.db
 logs/
 
 CLAUDE.md
+.claude

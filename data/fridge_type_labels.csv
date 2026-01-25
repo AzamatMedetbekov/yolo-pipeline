@@ -1,0 +1,11 @@
+split,image_name,type_class
+train,test1.jpg,
+train,test10.jpg,
+train,test2.jpg,
+train,test3.jpg,
+train,test4.jpg,
+train,test5.jpg,
+train,test6.jpg,
+train,test7.jpg,
+val,test8.jpg,
+val,test9.jpg,

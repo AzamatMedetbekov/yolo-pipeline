@@ -7,17 +7,17 @@ from torchvision import models, transforms
 from PIL import Image
 
 # ============================
-# 설정
+# Configuration
 # ============================
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print("Using device:", DEVICE)
 
-# 학습 때 저장해둔 체크포인트 경로
+# Checkpoint path saved during training
 ATTR_CKPT = "attr_runs/attrnet_fridge10.pt"
 
-# 회귀 attr 스케일/시프트 (학습할 때 썼던 값과 반드시 동일해야 함)
-# - attr3_internal_volume: L 단위 → /1000 해서 학습
-# - attr8_year           : (year - 2000) / 50 해서 학습
+# Regression attribute scale/shift (must match values used during training)
+# - attr3_internal_volume: Liters → divided by 1000 during training
+# - attr8_year           : (year - 2000) / 50 during training
 REG_SCALE = {
     "attr3_internal_volume": 1000.0,
     "attr8_year": 50.0,
@@ -27,7 +27,7 @@ REG_SHIFT = {
     "attr8_year": 2000.0,
 }
 
-# 분류 attr 인덱스 → 사람이 읽을 수 있는 문자열 매핑
+# Classification attribute index → human-readable string mapping
 # CLS_ATTRS = {
 #   "attr5_refrigerant": 3,
 #   "attr6_door_type": 3,
@@ -41,23 +41,23 @@ CLS_LABELS = {
         2: "R290",
     },
     "attr6_door_type": {
-        0: "슬라이딩",
-        1: "스윙",
-        2: "오픈형",
+        0: "Sliding",
+        1: "Swing",
+        2: "Open",
     },
     "attr7_cabinet_type": {
-        0: "수직형",
-        1: "대면형",
+        0: "Vertical",
+        1: "Face-to-face",
     },
     "attr9_insulation_type": {
-        0: "PU 폼",
-        1: "기타",
+        0: "PU Foam",
+        1: "Other",
     },
 }
 
 
 # ============================
-# AttrNet 정의 (train 때와 동일해야 함)
+# AttrNet Definition (must match training)
 # ============================
 
 class AttrNet(nn.Module):
@@ -97,7 +97,7 @@ class AttrNet(nn.Module):
 
 
 # ============================
-# 유틸 함수
+# Utility Functions
 # ============================
 
 def load_attr_model(ckpt_path: str, device: torch.device):
@@ -135,8 +135,8 @@ def preprocess_image(img_path: str, tfm):
 
 def unscale_regression(pred_reg: torch.Tensor, reg_attrs: List[str]):
     """
-    pred_reg: (D,) 텐서 (한 샘플)
-    리턴: {attr_name: 원래 단위의 값}
+    pred_reg: (D,) tensor (single sample)
+    Returns: {attr_name: value in original units}
     """
     result = {}
     for i, name in enumerate(reg_attrs):
@@ -151,8 +151,8 @@ def unscale_regression(pred_reg: torch.Tensor, reg_attrs: List[str]):
 
 def decode_classification(logits: torch.Tensor, attr_name: str):
     """
-    logits: (C,) 텐서 (한 샘플)
-    반환: (pred_idx, pred_label, probs)
+    logits: (C,) tensor (single sample)
+    Returns: (pred_idx, pred_label, probs)
     """
     probs = torch.softmax(logits, dim=-1)
     idx = int(torch.argmax(probs).item())
@@ -164,25 +164,25 @@ def decode_classification(logits: torch.Tensor, attr_name: str):
 def infer_on_image(img_path: str):
     print(f"\n=== Inference on: {img_path} ===")
 
-    # 1) 모델, 변환 로드
+    # 1) Load model and transforms
     model, reg_attrs, cls_attrs = load_attr_model(ATTR_CKPT, DEVICE)
     tfm = build_transform(img_size=224)
 
-    # 2) 이미지 로드 + 전처리
+    # 2) Load and preprocess image
     x, raw_img = preprocess_image(img_path, tfm)
     x = x.to(DEVICE)
 
-    # 3) 인퍼런스
+    # 3) Run inference
     with torch.no_grad():
         out = model(x)
 
-    # 4) 회귀 결과 처리 (첫 샘플 기준)
+    # 4) Process regression results (first sample)
     reg_results = {}
     if "reg" in out:
         pred_reg = out["reg"][0]  # (D,)
         reg_results = unscale_regression(pred_reg, reg_attrs)
 
-    # 5) 분류 결과 처리
+    # 5) Process classification results
     cls_results = {}
     for name, logits in out["cls"].items():
         logits0 = logits[0]  # (C,)
@@ -193,7 +193,7 @@ def infer_on_image(img_path: str):
             "probs": probs,
         }
 
-    # 6) 출력 (보기 좋게)
+    # 6) Print results
     print("\n[Regression attrs]")
     for k, v in reg_results.items():
         print(f"  {k}: {v:.4f}")
@@ -206,9 +206,9 @@ def infer_on_image(img_path: str):
 
 
 if __name__ == "__main__":
-    # 테스트용 예시 경로 (원하는 이미지 파일로 바꿔서 사용)
+    # Example test image path (change to actual image file)
     test_img = "yolov12/data/fridge_attr10/images/val/test8.jpg"
     if not os.path.exists(test_img):
-        print("⚠ test_img 경로를 실제 존재하는 이미지로 바꿔주세요.")
+        print("Warning: test_img path does not exist. Please provide a valid image path.")
     else:
         infer_on_image(test_img)

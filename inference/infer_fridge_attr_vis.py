@@ -9,20 +9,20 @@ from PIL import Image
 from ultralytics import YOLO
 
 # ============================
-# 설정
+# Configuration
 # ============================
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print("Using device:", DEVICE)
 
-# 학습 때 저장해둔 체크포인트 경로
+# Checkpoint path saved during training
 ATTR_CKPT = "attr_runs/attrnet_fridge10.pt"
 
-# YOLO 세그멘테이션 가중치 (네가 학습한 best.pt 경로로 바꿔)
+# YOLO segmentation weights (change to your trained best.pt path)
 YOLO_SEG_WEIGHTS = "yolov12/runs/fridge_seg_attr102/weights/best.pt"
 
-# 회귀 attr 스케일/시프트 (학습 때와 동일)
+# Regression attribute scale/shift (must match training)
 REG_SCALE = {
-    "attr3_internal_volume": 1000.0,  # L → 대략 0~몇
+    "attr3_internal_volume": 1000.0,  # Liters → scaled to ~0-N range
     "attr8_year": 50.0,               # (year - 2000) / 50
 }
 REG_SHIFT = {
@@ -30,17 +30,17 @@ REG_SHIFT = {
     "attr8_year": 2000.0,
 }
 
-# 사람이 보기 좋은 한글 이름 (회귀)
-REG_LABEL_KO = {
-    "attr1_power_kw": "소비전력[kW]",
-    "attr2_u_value": "열관류율[W/m²K]",
-    "attr3_internal_volume": "내용적[L]",
-    "attr4_temp_class": "온도클래스",
-    "attr8_year": "제조년",
-    "attr10_misc": "기타(연속값)",
+# Human-readable labels for regression attributes
+REG_LABEL_NAMES = {
+    "attr1_power_kw": "Power[kW]",
+    "attr2_u_value": "U-value[W/m²K]",
+    "attr3_internal_volume": "Volume[L]",
+    "attr4_temp_class": "Temp Class",
+    "attr8_year": "Year",
+    "attr10_misc": "Misc(continuous)",
 }
 
-# 분류 attr 인덱스 → 사람이 읽을 수 있는 문자열 매핑
+# Classification attribute index → human-readable string mapping
 CLS_LABELS = {
     "attr5_refrigerant": {
         0: "R404A",
@@ -48,31 +48,31 @@ CLS_LABELS = {
         2: "R290",
     },
     "attr6_door_type": {
-        0: "슬라이딩",
-        1: "스윙",
-        2: "오픈형",
+        0: "Sliding",
+        1: "Swing",
+        2: "Open",
     },
     "attr7_cabinet_type": {
-        0: "수직형",
-        1: "대면형",
+        0: "Vertical",
+        1: "Face-to-face",
     },
     "attr9_insulation_type": {
-        0: "PU 폼",
-        1: "기타",
+        0: "PU Foam",
+        1: "Other",
     },
 }
 
-# 분류 attr 한글 이름
-CLS_LABEL_KO = {
-    "attr5_refrigerant": "냉매",
-    "attr6_door_type": "도어타입",
-    "attr7_cabinet_type": "캐비닛형태",
-    "attr9_insulation_type": "단열재",
+# Human-readable labels for classification attributes
+CLS_LABEL_NAMES = {
+    "attr5_refrigerant": "Refrigerant",
+    "attr6_door_type": "Door Type",
+    "attr7_cabinet_type": "Cabinet Type",
+    "attr9_insulation_type": "Insulation",
 }
 
 
 # ============================
-# AttrNet 정의 (train 때와 동일해야 함)
+# AttrNet Definition (must match training)
 # ============================
 
 class AttrNet(nn.Module):
@@ -112,7 +112,7 @@ class AttrNet(nn.Module):
 
 
 # ============================
-# 유틸 함수
+# Utility Functions
 # ============================
 
 def load_attr_model(ckpt_path: str, device: torch.device):
@@ -149,8 +149,8 @@ def preprocess_pil(img: Image.Image, tfm):
 
 def unscale_regression(pred_reg: torch.Tensor, reg_attrs: List[str]):
     """
-    pred_reg: (D,) 텐서 (한 샘플)
-    리턴: {attr_name: 원래 단위의 값}
+    pred_reg: (D,) tensor (single sample)
+    Returns: {attr_name: value in original units}
     """
     result = {}
     for i, name in enumerate(reg_attrs):
@@ -165,8 +165,8 @@ def unscale_regression(pred_reg: torch.Tensor, reg_attrs: List[str]):
 
 def decode_classification(logits: torch.Tensor, attr_name: str):
     """
-    logits: (C,) 텐서 (한 샘플)
-    반환: (pred_idx, pred_label)
+    logits: (C,) tensor (single sample)
+    Returns: (pred_idx, pred_label)
     """
     probs = torch.softmax(logits, dim=-1)
     idx = int(torch.argmax(probs).item())
@@ -204,21 +204,21 @@ def visualize_seg_and_attr(img_path: str,
                            conf_thres: float = 0.25):
     print(f"\n=== Pipeline inference on: {img_path} ===")
 
-    # 1) 모델 로드 (YOLO seg + AttrNet)
+    # 1) Load models (YOLO seg + AttrNet)
     seg_model = YOLO(YOLO_SEG_WEIGHTS)
     attr_model, reg_attrs, cls_attrs = load_attr_model(ATTR_CKPT, DEVICE)
 
-    # 2) YOLO 세그 돌리기
+    # 2) Run YOLO segmentation
     results = seg_model(img_path, task="segment", imgsz=640, conf=conf_thres, verbose=False)
     r = results[0]
 
-    # YOLO가 그려준 세그멘테이션 시각화 이미지 (BGR)
+    # YOLO visualization image with segmentation (BGR)
     vis_img = r.plot()  # numpy array, BGR
 
-    # 3) 냉장고 영역 crop용 bbox 선택 (가장 신뢰도 높은 박스 1개)
+    # 3) Select bbox for cropping refrigerator region (highest confidence box)
     crop_pil = None
     if r.boxes is not None and len(r.boxes) > 0:
-        # conf 기준으로 정렬
+        # Sort by confidence
         boxes = r.boxes
         confs = boxes.conf.cpu().numpy()
         best_idx = int(confs.argmax())
@@ -236,20 +236,19 @@ def visualize_seg_and_attr(img_path: str,
             crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
             crop_pil = Image.fromarray(crop_rgb)
 
-    # 4) AttrNet 인퍼런스 (crop 있으면 crop, 없으면 원본 전체)
+    # 4) AttrNet inference (use crop if available, otherwise full image)
     if crop_pil is None:
-        print("⚠ bbox가 없어 전체 이미지를 그대로 attr 인퍼런스에 사용합니다.")
+        print("Warning: No bbox detected, using full image for attribute inference.")
         pil_img = Image.open(img_path).convert("RGB")
     else:
         pil_img = crop_pil
 
     reg_results, cls_results = run_attr_on_pil(pil_img, attr_model, reg_attrs, cls_attrs)
 
-    # 5) 텍스트를 이미지 위에 overlay
-    # BGR → 그대로 두고 글자만 얹자
+    # 5) Overlay text on image
     lines = []
 
-    # 회귀 요약 (원하면 필요한 것만 골라서)
+    # Regression summary (select attributes as needed)
     reg_order = [
         "attr1_power_kw",
         "attr2_u_value",
@@ -261,16 +260,15 @@ def visualize_seg_and_attr(img_path: str,
     for k in reg_order:
         if k in reg_results:
             v = reg_results[k]
-            label_ko = REG_LABEL_KO.get(k, k)
-            # 단위 약하게 붙여줌
-            lines.append(f"{label_ko}: {v:.2f}")
+            label_name = REG_LABEL_NAMES.get(k, k)
+            lines.append(f"{label_name}: {v:.2f}")
 
-    # 분류 요약
+    # Classification summary
     for k, info in cls_results.items():
-        label_name = CLS_LABEL_KO.get(k, k)
+        label_name = CLS_LABEL_NAMES.get(k, k)
         lines.append(f"{label_name}: {info['label']}")
 
-    # 좌측 상단에 텍스트 블록
+    # Text block at top-left
     y0 = 30
     for i, text in enumerate(lines):
         y = y0 + i * 25
@@ -285,17 +283,17 @@ def visualize_seg_and_attr(img_path: str,
             cv2.LINE_AA,
         )
 
-    # 6) 이미지 저장
+    # 6) Save image
     cv2.imwrite(out_path, vis_img)
-    print(f"[OK] 세그먼테이션 + attr 결과 이미지를 저장했습니다: {out_path}")
+    print(f"[OK] Saved segmentation + attribute result image: {out_path}")
 
     return reg_results, cls_results, out_path
 
 
 if __name__ == "__main__":
-    # 테스트용 예시 경로 (원하는 이미지 파일로 바꿔서 사용)
+    # Example test image path (change to actual image file)
     test_img = "yolov12/data/fridge_attr10/images/val/test8.jpg"
     if not os.path.exists(test_img):
-        print("⚠ test_img 경로를 실제 존재하는 이미지로 바꿔주세요.")
+        print("Warning: test_img path does not exist. Please provide a valid image path.")
     else:
         visualize_seg_and_attr(test_img, out_path="fridge_seg_attr_demo.png")

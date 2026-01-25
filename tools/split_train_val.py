@@ -2,7 +2,7 @@ import os
 import glob
 import shutil
 
-# YoloProject 기준 경로
+# Paths relative to YoloProject root
 BASE_DIR = "yolov12/data/fridge_attr10"
 IMG_DIR = os.path.join(BASE_DIR, "images")
 LBL_DIR = os.path.join(BASE_DIR, "labels")
@@ -17,7 +17,7 @@ os.makedirs(IMG_VAL_DIR, exist_ok=True)
 os.makedirs(LBL_TRAIN_DIR, exist_ok=True)
 os.makedirs(LBL_VAL_DIR, exist_ok=True)
 
-# 아직 train/val 안 들어간 이미지들만 대상으로 (images/ 바로 아래)
+# Only process images not yet in train/val (directly under images/)
 img_paths = sorted(
     glob.glob(os.path.join(IMG_DIR, "*.jpg"))
     + glob.glob(os.path.join(IMG_DIR, "*.jpeg"))
@@ -31,7 +31,7 @@ if n == 0:
     print("No images found. Check your paths.")
     raise SystemExit
 
-# 아주 단순하게 앞 80% train, 뒤 20% val
+# Simple split: first 80% for train, last 20% for val
 split_idx = max(1, int(n * 0.8))
 train_imgs = img_paths[:split_idx]
 val_imgs = img_paths[split_idx:]

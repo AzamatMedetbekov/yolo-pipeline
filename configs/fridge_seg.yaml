@@ -2,7 +2,7 @@
 # Works with relative paths for cross-platform compatibility
 
 # Dataset root path (relative to where training script is run from)
-path: yolov12/data/fridge_attr10
+path: data
 
 # Image directories (relative to path)
 train: images/train
@@ -13,4 +13,4 @@ names:
   0: fridge_equipment
 
 # Number of classes
-nc: 4
+nc: 1

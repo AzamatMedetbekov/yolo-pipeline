@@ -8,7 +8,8 @@ LabelMe format: JSON with shapes containing polygon points
 YOLO seg format: class_id x1 y1 x2 y2 ... xn yn (normalized 0-1)
 
 Usage:
-    python scripts/convert_labelme.py --json-dir path/to/labelme_json --img-dir path/to/images --out-dir path/to/labels
+    python scripts/convert_labelme.py --json-dir data/labels_json/train --img-dir data/images/train --out-dir data/labels/train
+    python scripts/convert_labelme.py --json-dir data/labels_json/val --img-dir data/images/val --out-dir data/labels/val
 """
 
 import argparse

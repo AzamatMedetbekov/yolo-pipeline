@@ -11,50 +11,6 @@ import torch.nn.functional as F
 import torch.cuda.amp as amp
 
 
-# used to normalize the values to common metric for loss calculation, consequently, training
-
-
-def calculate_dataset_stats(csv_path, split="train"):
-    print(f"[INFO] Calculating stats from {csv_path} ({split})...")
-
-    # storage
-    values = {k: [] for k in REG_ATTRS}
-
-    with open(csv_path, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if row["split"] != split:
-                continue
-
-        for col in REG_ATTRS:
-            try:
-                val = float(row[col])
-                values[col].append(val)
-            except ValueError:
-                continue
-
-    mean = {}
-    std = {}
-
-    for col, val_list in values.items():
-        if len(val_list) == 0:
-            print(f"[WARNING] No data found for {col}, using default 0/1")
-            mean[col] = 0.0
-            std[col] = 1.0
-            continue
-
-        t = torch.tensor(val_list, dtype=torch.float32)
-        mean[col] = t.mean().item()
-        std[col] = t.std().item()
-
-        if std[col] < 1e-6:
-            std[col] = 1.0
-
-    print("Calculated Means:", mean)
-    print("Calculated Stds: ", std)
-    return mean, std
-
-
 # ============================
 # Configuration
 # ============================
@@ -66,15 +22,6 @@ W_REG = 1
 W_CLS = 1
 
 # Define which attrs are regression / classification
-# For attrs with large values, apply scaling and translation
-REG_SCALE = {
-    "attr3_internal_volume": 1000.0,  # Liters → scaled to ~0-2 range
-    "attr8_year": 50.0,  # (year - 2000) / 50
-}
-REG_SHIFT = {
-    "attr3_internal_volume": 0.0,
-    "attr8_year": 2000.0,
-}
 
 REG_ATTRS: List[str] = [
     "attr1_power_kw",
@@ -104,6 +51,47 @@ if DEVICE.type == "cuda":
     print("GPU name:", torch.cuda.get_device_name(0))
 else:
     print("CUDA not available, running on CPU")
+
+
+# used to normalize the values to common metric for loss calculation, consequently, training
+def calculate_dataset_stats(csv_path, split="train"):
+    print(f"[INFO] Calculating stats from {csv_path} ({split})...")
+
+    # storage
+    values = {k: [] for k in REG_ATTRS}
+
+    with open(csv_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row["split"] != split:
+                continue
+            for col in REG_ATTRS:
+                try:
+                    val = float(row[col])
+                    values[col].append(val)
+                except ValueError:
+                    continue
+
+    mean = {}
+    std = {}
+
+    for col, val_list in values.items():
+        if len(val_list) == 0:
+            print(f"[WARNING] No data found for {col}, using default 0/1")
+            mean[col] = 0.0
+            std[col] = 1.0
+            continue
+
+        t = torch.tensor(val_list, dtype=torch.float32)
+        mean[col] = t.mean().item()
+        std[col] = t.std().item()
+
+        if std[col] < 1e-6:
+            std[col] = 1.0
+
+    print("Calculated Means:", mean)
+    print("Calculated Stds: ", std)
+    return mean, std
 
 # ============================
 # Dataset
@@ -320,7 +308,7 @@ def train():
     scaler = amp.GradScaler(enabled=(DEVICE.type == 'cuda'))
 
     steps_per_epoch = len(train_loader)
-    scheduler = torch.optim.lr_scheduler.OneCylceLR(
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
         max_lr = LR,
         steps_per_epoch=steps_per_epoch,
@@ -329,6 +317,8 @@ def train():
         div_factor = 25.0,
         final_div_factor = 1000.0
     )
+
+    cls_crits = {name: nn.CrossEntropyLoss(ignore_index=-1).to(DEVICE) for name in CLS_ATTRS}
 
     for epoch in range(1, EPOCHS + 1):
         # =========================
@@ -357,7 +347,9 @@ def train():
             optimizer.zero_grad()
             loss = 0.0
 
-            with torch.autocast(device_type = 'cuda', dtype = torch.float16, enabled=(DEVICE.type == 'cuda')):
+            device_type = 'cuda' if DEVICE.type == 'cuda' else 'cpu'
+
+            with torch.autocast(device_type = device_type, dtype = torch.float16, enabled=(DEVICE.type == 'cuda')):
                 out = model(imgs)
 
                 # ---- SmoothL1 (train) ----
@@ -383,10 +375,6 @@ def train():
                 # ---- Classification (train) ----
                 loss_cls_sum = 0.0
                 num_cls_heads = len(out["cls"])
-
-                cls_crits = {
-                    name: nn.CrossEntropyLoss(ignore_index=-1) for name in CLS_ATTRS.keys()
-                }
 
                 if num_cls_heads > 0:
                     cls_losses_accumulated = 0
@@ -449,7 +437,7 @@ def train():
                     valid_loss_sum = masked_loss.sum(dim=0)
                     valid_count = mask_reg.sum(0)
 
-                    per_dim_loss = valid_loss_sum / valid_count
+                    per_dim_loss = valid_loss_sum / valid_count.clamp(min=1.0)
                     loss_reg = per_dim_loss.sum()
 
                     for i, name in enumerate(REG_ATTRS):

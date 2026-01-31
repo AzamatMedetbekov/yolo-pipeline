@@ -183,8 +183,18 @@ def train(
     device: torch.device,
     output_dir: str,
 ):
-    tfm = transforms.Compose([
-        transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    train_tfm = transforms.Compose([
+        transforms.RandomResizedCrop(IMG_SIZE, scale=(0.6, 1.0), ratio=(0.75, 1.33)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomRotation(degrees=10),
+        transforms.ColorJitter(
+            brightness=0.2,
+            contrast=0.2,
+            saturation=0.15,
+            hue=0.02,
+        ),
+        transforms.RandomGrayscale(p=0.05),
+        transforms.RandomPerspective(distortion_scale=0.1, p=0.2),
         transforms.ToTensor(),
         transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
@@ -192,8 +202,18 @@ def train(
         ),
     ])
 
-    train_ds = FridgeTypeDataset(csv_path, img_base_dir, split="train", transform=tfm)
-    val_ds = FridgeTypeDataset(csv_path, img_base_dir, split="val", transform=tfm)
+    val_tfm = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(IMG_SIZE),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        ),
+    ])
+
+    train_ds = FridgeTypeDataset(csv_path, img_base_dir, split="train", transform=train_tfm)
+    val_ds = FridgeTypeDataset(csv_path, img_base_dir, split="val", transform=val_tfm)
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)

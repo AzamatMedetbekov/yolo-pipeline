@@ -149,25 +149,48 @@ class FridgeAttrDataset(Dataset):
 
         # regression target
         reg_vals = []
+        reg_mask = []
+
         for col in REG_ATTRS:
-            v = float(r[col])
+            raw_str = r.get(col, "").strip()
 
-            mu = self.means.get(col, 0.0)
-            sigma = self.stds.get(col, 1.0)
+            if raw_str == "" or raw_str.lower() in ["na", "nan", "?", "none"]:
+                reg_vals.append(0.0)
+                reg_mask.append(0.0)
+            else:
+                try:
+                    v = float(raw_str)
+                    mu = self.means.get(col, 0.0)
+                    sigma = self.stds.get(col, 1.0)
 
-            norm_v = (v - mu) / sigma
+                    norm_v = (v - mu) / sigma
 
-            reg_vals.append(norm_v)
+                    reg_vals.append(norm_v)
+                    reg_mask.append(1.0)
+
+                except ValueError:
+
+                    reg_vals.append(0.0)
+                    reg_mask.append(0.0)
 
         y_reg = torch.tensor(reg_vals, dtype=torch.float32)
+        mask_reg = torch.tensor(reg_mask, dtype=torch.float32)
 
         # Classification targets: LongTensor per attribute
         y_cls = {}
         for col in CLS_ATTRS.keys():
-            v = int(r[col])
-            y_cls[col] = torch.tensor(v, dtype=torch.long)
+            raw_str = r.get(col, "").strip()
 
-        return img, y_reg, y_cls
+            if raw_str == "" or raw_str.lower() in ["na", "nan", "?", "none"]:
+                y_cls[col] = torch.tensor(-1, dtype=torch.long)
+            else:
+                try:
+                    v = int(r[col])
+                    y_cls[col] = torch.tensor(v, dtype=torch.long)
+                except ValueError:
+                    y_cls[col] = torch.tensor(-1, dtype=torch.long)
+
+        return img, y_reg, mask_reg, y_cls
 
 
 # ============================
@@ -300,9 +323,14 @@ def train():
         train_reg_sums = {name: 0.0 for name in REG_ATTRS}
         train_cls_sums = {name: 0.0 for name in CLS_ATTRS.keys()}
 
-        for imgs, y_reg, y_cls in train_loader:
-            imgs = imgs.to(DEVICE)
-            y_reg = y_reg.to(DEVICE)
+        for imgs, y_reg, mask_reg, y_cls in train_loader:
+
+            imgs, y_reg, mask_reg = (
+                imgs.to(DEVICE),
+                y_reg.to(DEVICE),
+                mask_reg.to(DEVICE),
+            )
+
             for k in y_cls.keys():
                 y_cls[k] = y_cls[k].to(DEVICE)
 
@@ -318,8 +346,13 @@ def train():
             if "reg" in out:
                 pred_reg = out["reg"]  # (B, D)
 
-                raw_loss = F.smooth_l1_loss(pred_reg, y_reg, reduction='none')
-                per_dim_loss = raw_loss.mean(dim=0)
+                raw_loss = F.smooth_l1_loss(pred_reg, y_reg, reduction="none")
+                masked_loss = raw_loss * mask_reg
+
+                valid_loss_sum = masked_loss.sum(dim=0)
+                valid_count = mask_reg.sum(0)
+
+                per_dim_loss = valid_loss_sum / valid_count.clamp(min=1.0)
 
                 loss_reg_sum = per_dim_loss.sum()
 
@@ -328,10 +361,13 @@ def train():
                     # We use .item() to grab the python number
                     train_reg_sums[name] += per_dim_loss[i].item() * bs
 
-
             # ---- Classification (train) ----
             loss_cls_sum = 0.0
-            num_cls_heads = len(out['cls'])
+            num_cls_heads = len(out["cls"])
+
+            cls_crits = {
+                name: nn.CrossEntropyLoss(ignore_index=-1) for name in CLS_ATTRS.keys()
+            }
 
             if num_cls_heads > 0:
                 cls_losses_accumulated = 0
@@ -346,7 +382,6 @@ def train():
 
                 loss_cls_sum = cls_losses_accumulated / num_cls_heads
 
-            
             loss = (W_REG * loss_reg_sum) + (W_CLS * loss_cls_sum)
 
             loss.backward()
@@ -367,9 +402,12 @@ def train():
         val_cls_sums = {name: 0.0 for name in CLS_ATTRS.keys()}
 
         with torch.no_grad():
-            for imgs, y_reg, y_cls in val_loader:
-                imgs = imgs.to(DEVICE)
-                y_reg = y_reg.to(DEVICE)
+            for imgs, y_reg, mask_reg, y_cls in val_loader:
+                imgs, y_reg, mask_reg = (
+                    imgs.to(DEVICE),
+                    y_reg.to(DEVICE),
+                    mask_reg.to(DEVICE),
+                )
                 for k in y_cls.keys():
                     y_cls[k] = y_cls[k].to(DEVICE)
 
@@ -382,25 +420,38 @@ def train():
                 # ---- Regression (val) ----
                 if "reg" in out:
                     pred_reg = out["reg"]
-                    
-                    raw_loss = F.smooth_l1_loss(pred_reg, y_reg, reduction='none')
-                    per_dim_loss = raw_loss.mean(dim=0)
+
+                    raw_loss = F.smooth_l1_loss(pred_reg, y_reg, reduction="none")
+                    masked_loss = raw_loss * mask_reg
+
+                    valid_loss_sum = masked_loss.sum(dim=0)
+                    valid_count = mask_reg.sum(0)
+
+                    per_dim_loss = valid_loss_sum / valid_count
                     loss_reg = per_dim_loss.sum()
 
                     for i, name in enumerate(REG_ATTRS):
                         val_reg_sums[name] += per_dim_loss[i].item() * bs
 
-                    loss = loss + loss_reg
+                    loss = loss + (loss_reg * W_REG)
 
                 # ---- Classification (val) ----
                 loss_cls_sum = 0.0
-                for name, head_out in out["cls"].items():
-                    target = y_cls[name]
-                    loss_j = cls_crits[name](head_out, target)
-                    val_cls_sums[name] += loss_j.item() * bs
-                    loss_cls_sum += loss_j
+                num_cls_heads = len(out["cls"])
+                loss_cls_accumulated = 0.0
 
-                loss = loss + loss_cls_sum
+                if num_cls_heads > 0:
+                    for name, head_out in out["cls"].items():
+                        target = y_cls[name]
+                        loss_j = cls_crits[name](head_out, target)
+
+                        loss_cls_accumulated += loss_j
+
+                        val_cls_sums[name] += loss_j.item() * bs
+
+                    loss_cls_sum = loss_cls_accumulated / num_cls_heads
+                    loss = loss + (loss_cls_sum * W_CLS)
+
                 val_total_sum += loss.item() * bs
 
         avg_val_total = val_total_sum / len(val_ds)

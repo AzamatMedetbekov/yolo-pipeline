@@ -187,7 +187,9 @@ def train():
     train_tfm = transforms.Compose([
         transforms.RandomResizedCrop(IMG_SIZE, scale=(0.5, 1.0), ratio=(0.8, 1.25)),
         transforms.RandomHorizontalFlip(p=0.5),
-        transforms.ToTensor()
+        transforms.RandomAffine(degrees=10, translate=(0.1, 0.1)),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.01),
+        transforms.ToTensor(),
         norm,
     ])
 

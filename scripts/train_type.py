@@ -221,7 +221,12 @@ def train(
     print(f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}")
 
     model = TypeNet(num_classes=NUM_CLASSES).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=epochs,
+        eta_min=1e-6,
+    )
     criterion = nn.CrossEntropyLoss()
 
     best_val_acc = 0.0
@@ -273,10 +278,13 @@ def train(
         val_loss = val_loss_sum / val_total
         val_acc = val_correct / val_total
 
+        scheduler.step()
+
         print(
             f"Epoch {epoch:3d}/{epochs} | "
             f"Train Loss: {train_loss:.4f}, Acc: {train_acc:.4f} | "
-            f"Val Loss: {val_loss:.4f}, Acc: {val_acc:.4f}"
+            f"Val Loss: {val_loss:.4f}, Acc: {val_acc:.4f} | "
+            f"LR: {scheduler.get_last_lr()[0]:.6f}"
         )
 
         if val_acc > best_val_acc:

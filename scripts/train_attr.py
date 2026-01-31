@@ -9,7 +9,7 @@ from torchvision import models, transforms
 from PIL import Image
 
 
-# used to transform the values to common metric for loss calculation, consequently, training
+# used to normalize the values to common metric for loss calculation, consequently, training
 
 def calculate_dataset_stats(csv_path, split='train'):
     print(f"[INFO] Calculating stats from {csv_path} ({split})...")
@@ -103,29 +103,31 @@ else:
 # ============================
 
 class FridgeAttrDataset(Dataset):
-    def __init__(self, csv_path: str, split: str, transform=None):
+    def __init__(self, csv_path: str, split: str, stats = None, transform=None):
         self.transform = transform
+        self.rows = []
 
-        rows = []
         with open(csv_path, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for r in reader:
                 if r["split"] != split:
                     continue
-                rows.append(r)
+                self.rows.append(r)
 
-        if not rows:
-            raise RuntimeError(f"No rows for split={split} in {csv_path}")
-
-        self.rows = rows
+        if stats is None:
+            self.means = {k: 0.0 for k in REG_ATTRS}
+            self.stds = {k: 1.0 for k in REG_ATTRS}
+        else:
+            self.means = stats['mean']
+            self.stds = stats['std']
 
         # Check if regression / classification columns exist
-        for col in REG_ATTRS:
-            if col not in self.rows[0]:
-                raise KeyError(f"Missing regression column: {col}")
-        for col in CLS_ATTRS.keys():
-            if col not in self.rows[0]:
-                raise KeyError(f"Missing classification column: {col}")
+        # for col in REG_ATTRS:
+        #     if col not in self.rows[0]:
+        #         raise KeyError(f"Missing regression column: {col}")
+        # for col in CLS_ATTRS.keys():
+        #     if col not in self.rows[0]:
+        #         raise KeyError(f"Missing classification column: {col}")
 
     def __len__(self):
         return len(self.rows)
@@ -143,13 +145,12 @@ class FridgeAttrDataset(Dataset):
         for col in REG_ATTRS:
             v = float(r[col])
 
-            if col in REG_SCALE:
-                # (v - shift) / scale
-                shift = REG_SHIFT.get(col, 0.0)
-                scale = REG_SCALE[col]
-                v = (v - shift) / scale
+            mu = self.means.get(col, 0.0)
+            sigma = self.stds.get(col, 1.0)
 
-            reg_vals.append(v)
+            norm_v = (v - mu) / sigma
+
+            reg_vals.append(norm_v)
 
         y_reg = torch.tensor(reg_vals, dtype=torch.float32)
 
@@ -222,6 +223,9 @@ def print_loss_table(title, names, train_losses, val_losses):
 def train():
     # ----- Dataset / DataLoader -----
 
+    train_means, train_stds = calculate_dataset_stats(CSV_PATH, split="train")
+    stats_bundle = {'means': train_means, 'stds': train_stds}
+
     norm = transforms.Normalize(
         mean=[0.485, 0.456, 0.406],
         std=[0.229, 0.224, 0.225]
@@ -255,8 +259,8 @@ def train():
         norm,
     ])
 
-    train_ds = FridgeAttrDataset(CSV_PATH, split="train", transform=train_tfm)
-    val_ds   = FridgeAttrDataset(CSV_PATH, split="val",   transform=val_tfm)
+    train_ds = FridgeAttrDataset(CSV_PATH, split="train", stats = stats_bundle, transform=train_tfm)
+    val_ds   = FridgeAttrDataset(CSV_PATH, split="val", stats = stats_bundle, transform=val_tfm)
 
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
     val_loader   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False)

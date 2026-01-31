@@ -46,7 +46,7 @@ def main():
         shear=5.0,          # Shear angle (+/- 5 degrees)
         perspective=0.001,  # Perspective distortion
         flipud=0.0,         # Flip up-down (0 for fridges - usually upright)
-        fliplr=0.5,         # Flip left-right (50% probability)
+        fliplr=0.5,         # Flip left-right (50% probability
         # Mosaic & Mixup (very effective for small datasets)
         mosaic=1.0,         # Mosaic augmentation (combines 4 images)
         mixup=0.3,          # Mixup augmentation (blends 2 images) - increased

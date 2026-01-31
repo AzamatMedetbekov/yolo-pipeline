@@ -201,6 +201,19 @@ def main():
             resume=args.resume,
             amp=args.amp,
             workers=args.workers,
+
+            # ========== Augmentation (aggressive for small dataset) ==========
+            # Geometric augmentations
+            degrees=15.0,       # Rotate image (+/- 15 degrees)
+            degrees=15.0,       # Rotate image (+/- 15 degrees)
+            translate=0.2,      # Translate image (+/- 20%)
+            scale=0.5,          # Scale image (+/- 50%)
+            shear=5.0,          # Shear angle (+/- 5 degrees)
+            perspective=0.001,  # Perspective distortion
+            flipud=0.0,         # Flip up-down (0 for fridges - usually upright)
+            fliplr=0.5,         # Flip left-right (50% probability
+            hsv_s=0.7,          # Saturation shift (+/- 70%)
+            hsv_v=0.4,          # Value/brightness shift (+/- 40%)
         )
 
         print("\n" + "=" * 50)

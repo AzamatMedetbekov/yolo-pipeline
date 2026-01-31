@@ -7,29 +7,31 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from torchvision import models, transforms
 from PIL import Image
+import torch.nn.functional as F
 
 
 # used to normalize the values to common metric for loss calculation, consequently, training
 
-def calculate_dataset_stats(csv_path, split='train'):
+
+def calculate_dataset_stats(csv_path, split="train"):
     print(f"[INFO] Calculating stats from {csv_path} ({split})...")
 
     # storage
     values = {k: [] for k in REG_ATTRS}
 
-    with open(csv_path, 'r', encoding = 'utf-8') as f:
+    with open(csv_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            if row['split'] != split:
+            if row["split"] != split:
                 continue
-        
+
         for col in REG_ATTRS:
             try:
                 val = float(row[col])
                 values[col].append(val)
             except ValueError:
                 continue
-    
+
     mean = {}
     std = {}
 
@@ -40,16 +42,17 @@ def calculate_dataset_stats(csv_path, split='train'):
             std[col] = 1.0
             continue
 
-        t = torch.tensor(val_list, dtype = torch.float32)
+        t = torch.tensor(val_list, dtype=torch.float32)
         mean[col] = t.mean().item()
-        std[col] = t.mean().item()
+        std[col] = t.std().item()
 
         if std[col] < 1e-6:
             std[col] = 1.0
-        
+
     print("Calculated Means:", mean)
     print("Calculated Stds: ", std)
     return mean, std
+
 
 # ============================
 # Configuration
@@ -62,7 +65,7 @@ CSV_PATH = "data/fridge_attr10_labels.csv"
 # For attrs with large values, apply scaling and translation
 REG_SCALE = {
     "attr3_internal_volume": 1000.0,  # Liters → scaled to ~0-2 range
-    "attr8_year": 50.0,               # (year - 2000) / 50
+    "attr8_year": 50.0,  # (year - 2000) / 50
 }
 REG_SHIFT = {
     "attr3_internal_volume": 0.0,
@@ -102,8 +105,9 @@ else:
 # Dataset
 # ============================
 
+
 class FridgeAttrDataset(Dataset):
-    def __init__(self, csv_path: str, split: str, stats = None, transform=None):
+    def __init__(self, csv_path: str, split: str, stats=None, transform=None):
         self.transform = transform
         self.rows = []
 
@@ -118,8 +122,8 @@ class FridgeAttrDataset(Dataset):
             self.means = {k: 0.0 for k in REG_ATTRS}
             self.stds = {k: 1.0 for k in REG_ATTRS}
         else:
-            self.means = stats['mean']
-            self.stds = stats['std']
+            self.means = stats["mean"]
+            self.stds = stats["std"]
 
         # Check if regression / classification columns exist
         # for col in REG_ATTRS:
@@ -167,6 +171,7 @@ class FridgeAttrDataset(Dataset):
 # Model: ResNet18 + Multi-head
 # ============================
 
+
 class AttrNet(nn.Module):
     def __init__(self, reg_attrs: List[str], cls_attrs: Dict[str, int]):
         super().__init__()
@@ -203,10 +208,10 @@ class AttrNet(nn.Module):
         return out
 
 
-
 # ============================
 # Training Loop
 # ============================
+
 
 def print_loss_table(title, names, train_losses, val_losses):
     print(f"\n[{title}]")
@@ -220,25 +225,27 @@ def print_loss_table(title, names, train_losses, val_losses):
         v = val_losses[name]
         print(f"{name.ljust(col1_w)} | {t:10.4f} | {v:10.4f}")
 
+
 def train():
     # ----- Dataset / DataLoader -----
 
     train_means, train_stds = calculate_dataset_stats(CSV_PATH, split="train")
-    stats_bundle = {'means': train_means, 'stds': train_stds}
+    stats_bundle = {"mean": train_means, "std": train_stds}
 
-    norm = transforms.Normalize(
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225]
+    norm = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+    train_tfm = transforms.Compose(
+        [
+            transforms.RandomResizedCrop(IMG_SIZE, scale=(0.5, 1.0), ratio=(0.8, 1.25)),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomAffine(degrees=10, translate=(0.1, 0.1)),
+            transforms.ColorJitter(
+                brightness=0.2, contrast=0.2, saturation=0.2, hue=0.01
+            ),
+            transforms.ToTensor(),
+            norm,
+        ]
     )
-
-    train_tfm = transforms.Compose([
-        transforms.RandomResizedCrop(IMG_SIZE, scale=(0.5, 1.0), ratio=(0.8, 1.25)),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomAffine(degrees=10, translate=(0.1, 0.1)),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.01),
-        transforms.ToTensor(),
-        norm,
-    ])
 
     # The old tranformation resized all to square of size(IMG_SIZE, IMG_SIZE), which make the attributes like the height and width
     # to be overlooked and squashed, i.e. all images becomes a squashed square, therefore we changed it. The old one is below.
@@ -252,18 +259,25 @@ def train():
     #     ),
     # ])
 
-    val_tfm = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(IMG_SIZE),
-        transforms.ToTensor(),
-        norm,
-    ])
+    val_tfm = transforms.Compose(
+        [
+            transforms.Resize(256),
+            transforms.CenterCrop(IMG_SIZE),
+            transforms.ToTensor(),
+            norm,
+        ]
+    )
 
-    train_ds = FridgeAttrDataset(CSV_PATH, split="train", stats = stats_bundle, transform=train_tfm)
-    val_ds   = FridgeAttrDataset(CSV_PATH, split="val", stats = stats_bundle, transform=val_tfm)
+    train_ds = FridgeAttrDataset(
+        CSV_PATH, split="train", stats=stats_bundle, transform=train_tfm
+    )
+
+    val_ds = FridgeAttrDataset(
+        CSV_PATH, split="val", stats=stats_bundle, transform=val_tfm
+    )
 
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False)
+    val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False)
 
     model = AttrNet(REG_ATTRS, CLS_ATTRS).to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
@@ -296,17 +310,18 @@ def train():
 
             loss = 0.0
 
-            # ---- Regression (train) ----
+            # ---- SmoothL1 (train) ----
             if "reg" in out:
-                pred_reg = out["reg"]      # (B, D)
-                diff = pred_reg - y_reg    # (B, D)
-                # Total regression loss (MSE)
-                loss_reg = (diff * diff).mean()
+                pred_reg = out["reg"]  # (B, D)
+
+                raw_loss = F.smooth_l1_loss(pred_reg, y_reg, reduction='none')
+                per_dim_loss = raw_loss.mean(dim=0)
+                loss_reg = per_dim_loss.sum()
 
                 # Per-attribute MSE
-                per_dim_mse = (diff * diff).mean(dim=0)  # (D,)
                 for i, name in enumerate(REG_ATTRS):
-                    train_reg_sums[name] += per_dim_mse[i].item() * bs
+                    # We use .item() to grab the python number
+                    train_reg_sums[name] += per_dim_loss[i].item() * bs
 
                 loss = loss + loss_reg
 
@@ -326,8 +341,8 @@ def train():
             train_total_sum += loss.item() * bs
 
         avg_train_total = train_total_sum / len(train_ds)
-        avg_train_reg   = {n: train_reg_sums[n] / len(train_ds) for n in REG_ATTRS}
-        avg_train_cls   = {n: train_cls_sums[n] / len(train_ds) for n in CLS_ATTRS.keys()}
+        avg_train_reg = {n: train_reg_sums[n] / len(train_ds) for n in REG_ATTRS}
+        avg_train_cls = {n: train_cls_sums[n] / len(train_ds) for n in CLS_ATTRS.keys()}
 
         # =========================
         #        VAL PHASE
@@ -353,12 +368,13 @@ def train():
                 # ---- Regression (val) ----
                 if "reg" in out:
                     pred_reg = out["reg"]
-                    diff = pred_reg - y_reg
-                    loss_reg = (diff * diff).mean()
+                    
+                    raw_loss = F.smooth_l1_loss(pred_reg, y_reg, reduction='none')
+                    per_dim_loss = raw_loss.mean(dim=0)
+                    loss_reg = per_dim_loss.sum()
 
-                    per_dim_mse = (diff * diff).mean(dim=0)
                     for i, name in enumerate(REG_ATTRS):
-                        val_reg_sums[name] += per_dim_mse[i].item() * bs
+                        val_reg_sums[name] += per_dim_loss[i].item() * bs
 
                     loss = loss + loss_reg
 
@@ -374,8 +390,8 @@ def train():
                 val_total_sum += loss.item() * bs
 
         avg_val_total = val_total_sum / len(val_ds)
-        avg_val_reg   = {n: val_reg_sums[n] / len(val_ds) for n in REG_ATTRS}
-        avg_val_cls   = {n: val_cls_sums[n] / len(val_ds) for n in CLS_ATTRS.keys()}
+        avg_val_reg = {n: val_reg_sums[n] / len(val_ds) for n in REG_ATTRS}
+        avg_val_cls = {n: val_cls_sums[n] / len(val_ds) for n in CLS_ATTRS.keys()}
 
         # =========================
         #        PRINT TABLE
@@ -402,11 +418,16 @@ def train():
     # Save model
     os.makedirs("attr_runs", exist_ok=True)
     save_path = os.path.join("attr_runs", "attrnet_fridge10.pt")
-    torch.save({
-        "model_state": model.state_dict(),
-        "reg_attrs": REG_ATTRS,
-        "cls_attrs": CLS_ATTRS,
-    }, save_path)
+    torch.save(
+        {
+            "model_state": model.state_dict(),
+            "reg_attrs": REG_ATTRS,
+            "cls_attrs": CLS_ATTRS,
+            "stats_means": train_means,
+            "stats_std": train_stds,
+        },
+        save_path,
+    )
     print("[OK] Saved attr model to", save_path)
 
 

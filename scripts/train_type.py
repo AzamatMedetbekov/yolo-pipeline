@@ -12,6 +12,7 @@ import argparse
 import csv
 import os
 import sys
+import time
 from pathlib import Path
 
 import torch
@@ -234,8 +235,16 @@ def train(
     epochs_no_improve = 0
     os.makedirs(output_dir, exist_ok=True)
     save_path = os.path.join(output_dir, "typenet_fridge.pt")
+    log_path = os.path.join(output_dir, "train_log.csv")
+
+    with open(log_path, "w", newline="", encoding="utf-8") as log_f:
+        log_writer = csv.writer(log_f)
+        log_writer.writerow(
+            ["epoch", "train_loss", "train_acc", "val_loss", "val_acc", "lr", "epoch_sec"]
+        )
 
     for epoch in range(1, epochs + 1):
+        epoch_start = time.perf_counter()
         model.train()
         train_loss_sum = 0.0
         train_correct = 0
@@ -281,13 +290,29 @@ def train(
         val_acc = val_correct / val_total
 
         scheduler.step()
+        epoch_sec = time.perf_counter() - epoch_start
+        lr = scheduler.get_last_lr()[0]
 
         print(
             f"Epoch {epoch:3d}/{epochs} | "
             f"Train Loss: {train_loss:.4f}, Acc: {train_acc:.4f} | "
             f"Val Loss: {val_loss:.4f}, Acc: {val_acc:.4f} | "
-            f"LR: {scheduler.get_last_lr()[0]:.6f}"
+            f"LR: {lr:.6f}"
         )
+
+        with open(log_path, "a", newline="", encoding="utf-8") as log_f:
+            log_writer = csv.writer(log_f)
+            log_writer.writerow(
+                [
+                    epoch,
+                    f"{train_loss:.6f}",
+                    f"{train_acc:.6f}",
+                    f"{val_loss:.6f}",
+                    f"{val_acc:.6f}",
+                    f"{lr:.8f}",
+                    f"{epoch_sec:.3f}",
+                ]
+            )
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc

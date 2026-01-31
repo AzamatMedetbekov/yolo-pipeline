@@ -8,6 +8,49 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import models, transforms
 from PIL import Image
 
+
+# used to transform the values to common metric for loss calculation, consequently, training
+
+def calculate_dataset_stats(csv_path, split='train'):
+    print(f"[INFO] Calculating stats from {csv_path} ({split})...")
+
+    # storage
+    values = {k: [] for k in REG_ATTRS}
+
+    with open(csv_path, 'r', encoding = 'utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row['split'] != split:
+                continue
+        
+        for col in REG_ATTRS:
+            try:
+                val = float(row[col])
+                values[col].append(val)
+            except ValueError:
+                continue
+    
+    mean = {}
+    std = {}
+
+    for col, val_list in values.items():
+        if len(val_list) == 0:
+            print(f"[WARNING] No data found for {col}, using default 0/1")
+            mean[col] = 0.0
+            std[col] = 1.0
+            continue
+
+        t = torch.tensor(val_list, dtype = torch.float32)
+        mean[col] = t.mean().item()
+        std[col] = t.mean().item()
+
+        if std[col] < 1e-6:
+            std[col] = 1.0
+        
+    print("Calculated Means:", mean)
+    print("Calculated Stds: ", std)
+    return mean, std
+
 # ============================
 # Configuration
 # ============================
@@ -43,7 +86,7 @@ CLS_ATTRS: Dict[str, int] = {
 }
 
 IMG_SIZE = 224
-BATCH_SIZE = 4
+BATCH_SIZE = 32
 EPOCHS = 200  # Set higher for overfitting test
 LR = 1e-3
 

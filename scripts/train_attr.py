@@ -61,6 +61,9 @@ BASE_DIR = "yolov12/data/fridge_attr10"
 IMG_BASE_DIR = os.path.join(BASE_DIR, "images")
 CSV_PATH = "data/fridge_attr10_labels.csv"
 
+W_REG = 1
+W_CLS = 1
+
 # Define which attrs are regression / classification
 # For attrs with large values, apply scaling and translation
 REG_SCALE = {
@@ -311,29 +314,40 @@ def train():
             loss = 0.0
 
             # ---- SmoothL1 (train) ----
+            loss_reg_sum = 0.0
             if "reg" in out:
                 pred_reg = out["reg"]  # (B, D)
 
                 raw_loss = F.smooth_l1_loss(pred_reg, y_reg, reduction='none')
                 per_dim_loss = raw_loss.mean(dim=0)
-                loss_reg = per_dim_loss.sum()
+
+                loss_reg_sum = per_dim_loss.sum()
 
                 # Per-attribute MSE
                 for i, name in enumerate(REG_ATTRS):
                     # We use .item() to grab the python number
                     train_reg_sums[name] += per_dim_loss[i].item() * bs
 
-                loss = loss + loss_reg
 
             # ---- Classification (train) ----
             loss_cls_sum = 0.0
-            for name, head_out in out["cls"].items():
-                target = y_cls[name]
-                loss_j = cls_crits[name](head_out, target)
-                train_cls_sums[name] += loss_j.item() * bs
-                loss_cls_sum += loss_j
+            num_cls_heads = len(out['cls'])
 
-            loss = loss + loss_cls_sum
+            if num_cls_heads > 0:
+                cls_losses_accumulated = 0
+
+                for name, head_out in out["cls"].items():
+                    target = y_cls[name]
+                    loss_j = cls_crits[name](head_out, target)
+
+                    cls_losses_accumulated += loss_j
+
+                    train_cls_sums[name] += loss_j.item() * bs
+
+                loss_cls_sum = cls_losses_accumulated / num_cls_heads
+
+            
+            loss = (W_REG * loss_reg_sum) + (W_CLS * loss_cls_sum)
 
             loss.backward()
             optimizer.step()

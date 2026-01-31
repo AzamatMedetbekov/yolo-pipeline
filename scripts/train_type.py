@@ -182,6 +182,7 @@ def train(
     batch_size: int,
     device: torch.device,
     output_dir: str,
+    patience: int,
 ):
     train_tfm = transforms.Compose([
         transforms.RandomResizedCrop(IMG_SIZE, scale=(0.6, 1.0), ratio=(0.75, 1.33)),
@@ -230,6 +231,7 @@ def train(
     criterion = nn.CrossEntropyLoss()
 
     best_val_acc = 0.0
+    epochs_no_improve = 0
     os.makedirs(output_dir, exist_ok=True)
     save_path = os.path.join(output_dir, "typenet_fridge.pt")
 
@@ -289,6 +291,7 @@ def train(
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc
+            epochs_no_improve = 0
             torch.save(
                 {
                     "model_state": model.state_dict(),
@@ -298,6 +301,15 @@ def train(
                 save_path,
             )
             print(f"  -> New best val acc! Saved to {save_path}")
+        else:
+            epochs_no_improve += 1
+
+        if epochs_no_improve >= patience:
+            print(
+                f"[INFO] Early stopping at epoch {epoch} "
+                f"(no val acc improvement for {patience} epochs)"
+            )
+            break
 
     print(f"\n[OK] Training finished. Best val acc: {best_val_acc:.4f}")
 
@@ -344,6 +356,12 @@ def main():
         default="type_runs",
         help="Output directory for saving model checkpoints",
     )
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=5,
+        help="Early stopping patience (epochs without val acc improvement)",
+    )
 
     args = parser.parse_args()
 
@@ -383,6 +401,7 @@ def main():
         batch_size=args.batch,
         device=device,
         output_dir=output_dir,
+        patience=args.patience,
     )
 
 

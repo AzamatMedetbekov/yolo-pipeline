@@ -8,6 +8,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import models, transforms
 from PIL import Image
 import torch.nn.functional as F
+import torch.cuda.amp as amp
 
 
 # used to normalize the values to common metric for loss calculation, consequently, training
@@ -316,6 +317,8 @@ def train():
     patience = 15
     counter = 0
 
+    scaler = amp.GradScaler(enabled=(DEVICE.type == 'cuda'))
+
     for epoch in range(1, EPOCHS + 1):
         # =========================
         #        TRAIN PHASE
@@ -341,55 +344,57 @@ def train():
             bs = imgs.size(0)
 
             optimizer.zero_grad()
-            out = model(imgs)
-
             loss = 0.0
 
-            # ---- SmoothL1 (train) ----
-            loss_reg_sum = 0.0
-            if "reg" in out:
-                pred_reg = out["reg"]  # (B, D)
+            with torch.autocast(device_type = 'cuda', dtype = torch.float16, enabled=(DEVICE.type == 'cuda')):
+                out = model(imgs)
 
-                raw_loss = F.smooth_l1_loss(pred_reg, y_reg, reduction="none")
-                masked_loss = raw_loss * mask_reg
+                # ---- SmoothL1 (train) ----
+                loss_reg_sum = 0.0
+                if "reg" in out:
+                    pred_reg = out["reg"]  # (B, D)
 
-                valid_loss_sum = masked_loss.sum(dim=0)
-                valid_count = mask_reg.sum(0)
+                    raw_loss = F.smooth_l1_loss(pred_reg, y_reg, reduction="none")
+                    masked_loss = raw_loss * mask_reg
 
-                per_dim_loss = valid_loss_sum / valid_count.clamp(min=1.0)
+                    valid_loss_sum = masked_loss.sum(dim=0)
+                    valid_count = mask_reg.sum(0)
 
-                loss_reg_sum = per_dim_loss.sum()
+                    per_dim_loss = valid_loss_sum / valid_count.clamp(min=1.0)
 
-                # Per-attribute MSE
-                for i, name in enumerate(REG_ATTRS):
-                    # We use .item() to grab the python number
-                    train_reg_sums[name] += per_dim_loss[i].item() * bs
+                    loss_reg_sum = per_dim_loss.sum()
 
-            # ---- Classification (train) ----
-            loss_cls_sum = 0.0
-            num_cls_heads = len(out["cls"])
+                    # Per-attribute MSE
+                    for i, name in enumerate(REG_ATTRS):
+                        # We use .item() to grab the python number
+                        train_reg_sums[name] += per_dim_loss[i].item() * bs
 
-            cls_crits = {
-                name: nn.CrossEntropyLoss(ignore_index=-1) for name in CLS_ATTRS.keys()
-            }
+                # ---- Classification (train) ----
+                loss_cls_sum = 0.0
+                num_cls_heads = len(out["cls"])
 
-            if num_cls_heads > 0:
-                cls_losses_accumulated = 0
+                cls_crits = {
+                    name: nn.CrossEntropyLoss(ignore_index=-1) for name in CLS_ATTRS.keys()
+                }
 
-                for name, head_out in out["cls"].items():
-                    target = y_cls[name]
-                    loss_j = cls_crits[name](head_out, target)
+                if num_cls_heads > 0:
+                    cls_losses_accumulated = 0
 
-                    cls_losses_accumulated += loss_j
+                    for name, head_out in out["cls"].items():
+                        target = y_cls[name]
+                        loss_j = cls_crits[name](head_out, target)
 
-                    train_cls_sums[name] += loss_j.item() * bs
+                        cls_losses_accumulated += loss_j
 
-                loss_cls_sum = cls_losses_accumulated / num_cls_heads
+                        train_cls_sums[name] += loss_j.item() * bs
 
-            loss = (W_REG * loss_reg_sum) + (W_CLS * loss_cls_sum)
+                    loss_cls_sum = cls_losses_accumulated / num_cls_heads
 
-            loss.backward()
-            optimizer.step()
+                loss = (W_REG * loss_reg_sum) + (W_CLS * loss_cls_sum)
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             train_total_sum += loss.item() * bs
 

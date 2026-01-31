@@ -312,6 +312,10 @@ def train():
 
     print("Using device:", DEVICE)
 
+    best_val_loss = float('inf')
+    patience = 15
+    counter = 0
+
     for epoch in range(1, EPOCHS + 1):
         # =========================
         #        TRAIN PHASE
@@ -480,21 +484,35 @@ def train():
             val_losses=avg_val_cls,
         )
 
-    # Save model
-    os.makedirs("attr_runs", exist_ok=True)
-    save_path = os.path.join("attr_runs", "attrnet_fridge10.pt")
-    torch.save(
-        {
-            "model_state": model.state_dict(),
-            "reg_attrs": REG_ATTRS,
-            "cls_attrs": CLS_ATTRS,
-            "stats_means": train_means,
-            "stats_std": train_stds,
-        },
-        save_path,
-    )
-    print("[OK] Saved attr model to", save_path)
+        # Save Model
+        if avg_val_total < best_val_loss:
+            diff = best_val_loss - avg_val_total
+            print(f"[INFO] Validation Loss improved by {diff:.4f}. Saving best model...")
 
+            best_val_loss = avg_val_total
+            counter = 0
+
+            os.makedirs("attr_runs", exist_ok=True)
+            save_path = os.path.join("attr_runs", "best_attrnet.pt")
+
+            torch.save({
+                "epoch": epoch,
+                "model_state": model.state_dict(),
+                "optimizer_state": optimizer.state_dict(),
+                "reg_attrs": REG_ATTRS,
+                "cls_attrs": CLS_ATTRS,
+                "stats_means": train_means, 
+                "stats_std": train_stds,   
+                "best_loss": best_val_loss,
+            }, save_path)
+
+        else:
+            counter += 1
+            print(f"[INFO] No improvement. Patience: {counter}/{patience}")
+        
+        if counter >= patience:
+            print(f"\n[STOP] Early stopping triggered! Best loss was {best_val_loss:.4f}")
+            break
 
 if __name__ == "__main__":
     train()

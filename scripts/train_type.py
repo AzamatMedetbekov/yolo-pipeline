@@ -12,7 +12,9 @@ import argparse
 import csv
 import os
 import sys
+import json
 import time
+from datetime import datetime
 from pathlib import Path
 
 import torch
@@ -183,6 +185,7 @@ def train(
     batch_size: int,
     device: torch.device,
     output_dir: str,
+    run_name: str,
     patience: int,
 ):
     train_tfm = transforms.Compose([
@@ -231,18 +234,53 @@ def train(
     )
     criterion = nn.CrossEntropyLoss()
 
-    best_val_acc = 0.0
+    if not run_name:
+        run_name = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    run_dir = os.path.join(output_dir, run_name)
+
+    best_val_acc = -1.0
     epochs_no_improve = 0
-    os.makedirs(output_dir, exist_ok=True)
-    save_path = os.path.join(output_dir, "typenet_fridge.pt")
-    log_path = os.path.join(output_dir, "train_log.csv")
+    os.makedirs(run_dir, exist_ok=True)
+    best_path = os.path.join(run_dir, "best.pt")
+    last_path = os.path.join(run_dir, "last.pt")
+    log_path = os.path.join(run_dir, "train_log.csv")
+    per_class_path = os.path.join(run_dir, "per_class_metrics.csv")
+    summary_path = os.path.join(run_dir, "metrics.json")
 
     with open(log_path, "w", newline="", encoding="utf-8") as log_f:
         log_writer = csv.writer(log_f)
         log_writer.writerow(
-            ["epoch", "train_loss", "train_acc", "val_loss", "val_acc", "lr", "epoch_sec"]
+            [
+                "epoch",
+                "train_loss",
+                "train_acc",
+                "val_loss",
+                "val_acc",
+                "macro_precision",
+                "macro_recall",
+                "macro_f1",
+                "lr",
+                "epoch_sec",
+            ]
         )
 
+    with open(per_class_path, "w", newline="", encoding="utf-8") as per_class_f:
+        per_class_writer = csv.writer(per_class_f)
+        header = ["epoch"]
+        for idx in range(NUM_CLASSES):
+            name = TYPE_LABELS.get(idx, f"class_{idx}")
+            header.extend(
+                [
+                    f"acc_{name}",
+                    f"prec_{name}",
+                    f"rec_{name}",
+                    f"f1_{name}",
+                ]
+            )
+        per_class_writer.writerow(header)
+
+    best_confusion = None
+    best_epoch = 0
     for epoch in range(1, epochs + 1):
         epoch_start = time.perf_counter()
         model.train()
@@ -273,6 +311,7 @@ def train(
         val_correct = 0
         val_total = 0
 
+        confusion = torch.zeros(NUM_CLASSES, NUM_CLASSES, dtype=torch.int64)
         with torch.no_grad():
             for imgs, labels in val_loader:
                 imgs = imgs.to(device)
@@ -285,9 +324,38 @@ def train(
                 preds = logits.argmax(dim=1)
                 val_correct += (preds == labels).sum().item()
                 val_total += imgs.size(0)
+                labels_cpu = labels.detach().cpu()
+                preds_cpu = preds.detach().cpu()
+                indices = labels_cpu * NUM_CLASSES + preds_cpu
+                confusion += torch.bincount(
+                    indices, minlength=NUM_CLASSES * NUM_CLASSES
+                ).reshape(NUM_CLASSES, NUM_CLASSES)
 
         val_loss = val_loss_sum / val_total
         val_acc = val_correct / val_total
+        confusion_f = confusion.to(torch.float32)
+        row_sum = confusion_f.sum(dim=1)
+        col_sum = confusion_f.sum(dim=0)
+        diag = torch.diag(confusion_f)
+
+        per_class_acc = torch.where(row_sum > 0, diag / row_sum, torch.zeros_like(diag))
+        per_class_rec = per_class_acc
+        per_class_prec = torch.where(col_sum > 0, diag / col_sum, torch.zeros_like(diag))
+        per_class_f1 = torch.where(
+            (per_class_prec + per_class_rec) > 0,
+            2 * per_class_prec * per_class_rec / (per_class_prec + per_class_rec),
+            torch.zeros_like(diag),
+        )
+
+        valid_rec = row_sum > 0
+        valid_prec = col_sum > 0
+        macro_recall = per_class_rec[valid_rec].mean().item() if valid_rec.any() else 0.0
+        macro_precision = (
+            per_class_prec[valid_prec].mean().item() if valid_prec.any() else 0.0
+        )
+        macro_f1 = (
+            per_class_f1[valid_rec].mean().item() if valid_rec.any() else 0.0
+        )
 
         scheduler.step()
         epoch_sec = time.perf_counter() - epoch_start
@@ -299,6 +367,9 @@ def train(
             f"Val Loss: {val_loss:.4f}, Acc: {val_acc:.4f} | "
             f"LR: {lr:.6f}"
         )
+        print(
+            f"  Macro P/R/F1: {macro_precision:.4f} / {macro_recall:.4f} / {macro_f1:.4f}"
+        )
 
         with open(log_path, "a", newline="", encoding="utf-8") as log_f:
             log_writer = csv.writer(log_f)
@@ -309,23 +380,51 @@ def train(
                     f"{train_acc:.6f}",
                     f"{val_loss:.6f}",
                     f"{val_acc:.6f}",
+                    f"{macro_precision:.6f}",
+                    f"{macro_recall:.6f}",
+                    f"{macro_f1:.6f}",
                     f"{lr:.8f}",
                     f"{epoch_sec:.3f}",
                 ]
             )
 
+        with open(per_class_path, "a", newline="", encoding="utf-8") as per_class_f:
+            per_class_writer = csv.writer(per_class_f)
+            row = [epoch]
+            for i in range(NUM_CLASSES):
+                row.extend(
+                    [
+                        f"{per_class_acc[i].item():.6f}",
+                        f"{per_class_prec[i].item():.6f}",
+                        f"{per_class_rec[i].item():.6f}",
+                        f"{per_class_f1[i].item():.6f}",
+                    ]
+                )
+            per_class_writer.writerow(row)
+
+        torch.save(
+            {
+                "model_state": model.state_dict(),
+                "num_classes": NUM_CLASSES,
+                "type_labels": TYPE_LABELS,
+            },
+            last_path,
+        )
+
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             epochs_no_improve = 0
+            best_epoch = epoch
+            best_confusion = confusion.clone()
             torch.save(
                 {
                     "model_state": model.state_dict(),
                     "num_classes": NUM_CLASSES,
                     "type_labels": TYPE_LABELS,
                 },
-                save_path,
+                best_path,
             )
-            print(f"  -> New best val acc! Saved to {save_path}")
+            print(f"  -> New best val acc! Saved to {best_path}")
         else:
             epochs_no_improve += 1
 
@@ -336,7 +435,33 @@ def train(
             )
             break
 
+    if best_confusion is not None:
+        cm_path = os.path.join(run_dir, "confusion_matrix.csv")
+        with open(cm_path, "w", newline="", encoding="utf-8") as cm_f:
+            cm_writer = csv.writer(cm_f)
+            cm_writer.writerow([""] + [TYPE_LABELS.get(i, f"class_{i}") for i in range(NUM_CLASSES)])
+            for i in range(NUM_CLASSES):
+                cm_writer.writerow(
+                    [TYPE_LABELS.get(i, f"class_{i}")]
+                    + [str(int(v)) for v in best_confusion[i].tolist()]
+                )
+
+    with open(summary_path, "w", encoding="utf-8") as summary_f:
+        json.dump(
+            {
+                "best_val_acc": best_val_acc,
+                "best_epoch": best_epoch,
+                "epochs_ran": epoch,
+                "output_dir": run_dir,
+                "best_checkpoint": best_path,
+                "last_checkpoint": last_path,
+            },
+            summary_f,
+            indent=2,
+        )
+
     print(f"\n[OK] Training finished. Best val acc: {best_val_acc:.4f}")
+    print(f"[OK] Outputs saved under: {run_dir}")
 
 
 def main():
@@ -380,6 +505,12 @@ def main():
         type=str,
         default="type_runs",
         help="Output directory for saving model checkpoints",
+    )
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default="",
+        help="Run subfolder name (default: auto timestamp)",
     )
     parser.add_argument(
         "--patience",
@@ -426,6 +557,7 @@ def main():
         batch_size=args.batch,
         device=device,
         output_dir=output_dir,
+        run_name=args.run_name,
         patience=args.patience,
     )
 

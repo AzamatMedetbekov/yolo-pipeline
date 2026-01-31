@@ -307,7 +307,7 @@ def train():
     val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False)
 
     model = AttrNet(REG_ATTRS, CLS_ATTRS).to(DEVICE)
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-2)
 
     cls_crits = {name: nn.CrossEntropyLoss() for name in CLS_ATTRS.keys()}
 
@@ -318,6 +318,17 @@ def train():
     counter = 0
 
     scaler = amp.GradScaler(enabled=(DEVICE.type == 'cuda'))
+
+    steps_per_epoch = len(train_loader)
+    scheduler = torch.optim.lr_scheduler.OneCylceLR(
+        optimizer,
+        max_lr = LR,
+        steps_per_epoch=steps_per_epoch,
+        epochs = EPOCHS,
+        pct_start=0.3,
+        div_factor = 25.0,
+        final_div_factor = 1000.0
+    )
 
     for epoch in range(1, EPOCHS + 1):
         # =========================
@@ -395,6 +406,8 @@ def train():
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
+
+            scheduler.step()
 
             train_total_sum += loss.item() * bs
 

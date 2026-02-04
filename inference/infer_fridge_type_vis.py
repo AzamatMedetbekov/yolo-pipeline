@@ -32,8 +32,8 @@ DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print("Using device:", DEVICE)
 
 # Model paths
-TYPE_CKPT = "type_runs/typenet_fridge.pt"
-YOLO_SEG_WEIGHTS = "yolov12/runs/fridge_seg_attr102/weights/best.pt"
+TYPE_CKPT = "runs/type/train/best.pt"
+YOLO_SEG_WEIGHTS = "runs/segment/train/weights/best.pt"
 
 # Type labels
 TYPE_LABELS = {
@@ -187,7 +187,7 @@ def visualize_seg_and_type(img_path: str,
 
 if __name__ == "__main__":
     # Test image path (change to actual image)
-    test_img = "yolov12/data/fridge_attr10/images/val/test8.jpg"
+    test_img = "data/images/val/test8.jpg"
     if not os.path.exists(test_img):
         print("Test image not found. Please provide a valid image path.")
     else:

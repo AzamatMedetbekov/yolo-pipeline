@@ -15,10 +15,10 @@ DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print("Using device:", DEVICE)
 
 # Checkpoint path saved during training
-ATTR_CKPT = "attr_runs/attrnet_fridge10.pt"
+ATTR_CKPT = "runs/attr/train/best.pt"
 
 # YOLO segmentation weights (change to your trained best.pt path)
-YOLO_SEG_WEIGHTS = "yolov12/runs/fridge_seg_attr102/weights/best.pt"
+YOLO_SEG_WEIGHTS = "runs/segment/train/weights/best.pt"
 
 # Regression attribute scale/shift (must match training)
 REG_SCALE = {
@@ -292,7 +292,7 @@ def visualize_seg_and_attr(img_path: str,
 
 if __name__ == "__main__":
     # Example test image path (change to actual image file)
-    test_img = "yolov12/data/fridge_attr10/images/val/test8.jpg"
+    test_img = "data/images/val/test8.jpg"
     if not os.path.exists(test_img):
         print("Warning: test_img path does not exist. Please provide a valid image path.")
     else:

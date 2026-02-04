@@ -20,5 +20,5 @@ epochs: 50
 patience: 5
 workers: 0
 
-project: runs/type
+output: runs/type
 name: train

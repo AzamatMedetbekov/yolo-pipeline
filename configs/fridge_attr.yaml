@@ -30,5 +30,5 @@ weights:
 
 workers: 0
 
-project: runs/attr
+output: runs/attr
 name: train

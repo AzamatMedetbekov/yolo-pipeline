@@ -1,0 +1,24 @@
+# Fridge type classification config
+# Paths are relative to repo root
+
+data: data
+csv: data/fridge_type_labels.csv
+
+num_classes: 6
+type_labels:
+  0: vertical
+  1: horizontal
+  2: vertical_open
+  3: horizontal_open
+  4: combination
+  5: coldroom
+
+img_size: 224
+lr: 0.001
+batch: 4
+epochs: 50
+patience: 5
+workers: 0
+
+project: runs/type
+name: train

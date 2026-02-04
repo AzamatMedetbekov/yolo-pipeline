@@ -1,0 +1,34 @@
+# Fridge attribute prediction config
+# Paths are relative to repo root
+
+data: data
+csv: data/fridge_attr10_labels.csv
+
+reg_attrs:
+  - attr1_power_kw
+  - attr2_u_value
+  - attr3_internal_volume
+  - attr4_temp_class
+  - attr8_year
+  - attr10_misc
+
+cls_attrs:
+  attr5_refrigerant: 3
+  attr6_door_type: 3
+  attr7_cabinet_type: 2
+  attr9_insulation_type: 2
+
+img_size: 224
+lr: 0.001
+batch: 4
+epochs: 200
+patience: 15
+
+weights:
+  reg: 1
+  cls: 1
+
+workers: 0
+
+project: runs/attr
+name: train

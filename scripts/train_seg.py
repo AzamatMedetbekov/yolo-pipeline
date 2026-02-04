@@ -127,8 +127,8 @@ def main():
                         help='Device to use (0, 1, cpu, etc.)')
 
     # Output configuration
-    parser.add_argument('--project', type=str, default='runs/segment',
-                        help='Project directory for saving results')
+    parser.add_argument('--output', type=str, default='runs/segment',
+                        help='Output directory for saving results')
     parser.add_argument('--name', type=str, default='train',
                         help='Experiment name')
 
@@ -152,7 +152,7 @@ def main():
     print(f"ImgSize: {args.imgsz}")
     print(f"Batch:   {args.batch}")
     print(f"Device:  {args.device}")
-    print(f"Project: {args.project}")
+    print(f"Output:  {args.output}")
     print(f"Name:    {args.name}")
     print("=" * 50)
 
@@ -196,7 +196,7 @@ def main():
             imgsz=args.imgsz,
             batch=args.batch,
             device=args.device,
-            project=args.project,
+            project=args.output,
             name=args.name,
             resume=args.resume,
             amp=args.amp,
@@ -204,7 +204,6 @@ def main():
 
             # ========== Augmentation (aggressive for small dataset) ==========
             # Geometric augmentations
-            degrees=15.0,       # Rotate image (+/- 15 degrees)
             degrees=15.0,       # Rotate image (+/- 15 degrees)
             translate=0.2,      # Translate image (+/- 20%)
             scale=0.5,          # Scale image (+/- 50%)

@@ -9,7 +9,11 @@ Type classes:
     4: combination     - Two types combined
     5: coldroom        - Walk-in cold room
 """
+import argparse
 import os
+import sys
+from pathlib import Path
+import yaml
 
 import torch
 import torch.nn as nn
@@ -19,11 +23,9 @@ from PIL import Image
 # ============================
 # Configuration
 # ============================
-DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-print("Using device:", DEVICE)
-
-# Checkpoint path
-TYPE_CKPT = "type_runs/typenet_fridge.pt"
+# Add project root to path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 # Type labels (same as training)
 TYPE_LABELS = {
@@ -34,6 +36,42 @@ TYPE_LABELS = {
     4: "combination",
     5: "coldroom",
 }
+
+
+def resolve_path(path_str: str) -> str:
+    path = Path(path_str)
+    if path.is_absolute():
+        return str(path)
+    return str(PROJECT_ROOT / path_str)
+
+
+def normalize_device(device_str: str) -> str:
+    if device_str.lower() == "cpu":
+        return "cpu"
+    if device_str.isdigit():
+        return f"cuda:{device_str}"
+    return device_str
+
+
+def load_yaml_config(path_str: str) -> dict:
+    if not path_str:
+        return {}
+    path = Path(path_str)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    if not path.exists():
+        print(f"[WARN] Config not found: {path}. Using CLI/defaults.")
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def default_weights_from_config(config: dict) -> str:
+    if config.get("weights"):
+        return str(config["weights"])
+    project = config.get("project", "runs/type")
+    name = config.get("name", "train")
+    return os.path.join(project, name, "best.pt")
 
 
 # ============================
@@ -93,16 +131,16 @@ def preprocess_image(img_path: str, tfm):
     return x, img
 
 
-def infer_on_image(img_path: str):
+def infer_on_image(img_path: str, ckpt_path: str, device: torch.device, img_size: int):
     print(f"\n=== Inference on: {img_path} ===")
 
     # 1) Load model
-    model, type_labels = load_type_model(TYPE_CKPT, DEVICE)
-    tfm = build_transform(img_size=224)
+    model, type_labels = load_type_model(ckpt_path, device)
+    tfm = build_transform(img_size=img_size)
 
     # 2) Load and preprocess image
     x, raw_img = preprocess_image(img_path, tfm)
-    x = x.to(DEVICE)
+    x = x.to(device)
 
     # 3) Inference
     with torch.no_grad():
@@ -126,10 +164,77 @@ def infer_on_image(img_path: str):
     return pred_idx, pred_label, probs[0].cpu().numpy()
 
 
+def main():
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument(
+        "--config",
+        type=str,
+        default="configs/fridge_type.yaml",
+        help="Path to YAML config",
+    )
+    pre_args, remaining = pre_parser.parse_known_args()
+    config = load_yaml_config(pre_args.config)
+
+    def cfg(key: str, default):
+        return config.get(key, default)
+
+    default_weights = default_weights_from_config(config)
+
+    parser = argparse.ArgumentParser(
+        description="Inference for fridge type classifier",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        parents=[pre_parser],
+    )
+    parser.add_argument(
+        "--weights",
+        type=str,
+        default=cfg("weights", default_weights),
+        help="Path to type checkpoint (best.pt from a run)",
+    )
+    parser.add_argument(
+        "--image",
+        type=str,
+        default="",
+        help="Path to an input image",
+    )
+    parser.add_argument(
+        "--imgsz",
+        type=int,
+        default=cfg("img_size", 224),
+        help="Input image size",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=str(cfg("device", "0")),
+        help="Device to use (0, 1, cpu, etc.)",
+    )
+
+    args = parser.parse_args(remaining)
+
+    global TYPE_LABELS
+    if "type_labels" in config:
+        TYPE_LABELS = {int(k): v for k, v in config["type_labels"].items()}
+
+    if not args.image:
+        print("[ERROR] Please provide --image for inference.")
+        sys.exit(1)
+
+    device_str = normalize_device(args.device)
+    device = torch.device(device_str if torch.cuda.is_available() else "cpu")
+    print("Using device:", device)
+
+    ckpt_path = resolve_path(args.weights)
+    img_path = resolve_path(args.image)
+    if not os.path.exists(ckpt_path):
+        print(f"[ERROR] Checkpoint not found: {ckpt_path}")
+        sys.exit(1)
+    if not os.path.exists(img_path):
+        print(f"[ERROR] Image not found: {img_path}")
+        sys.exit(1)
+
+    infer_on_image(img_path, ckpt_path, device, args.imgsz)
+
+
 if __name__ == "__main__":
-    # Test image path (change to actual image)
-    test_img = "yolov12/data/fridge_attr10/images/val/test8.jpg"
-    if not os.path.exists(test_img):
-        print("Test image not found. Please provide a valid image path.")
-    else:
-        infer_on_image(test_img)
+    main()

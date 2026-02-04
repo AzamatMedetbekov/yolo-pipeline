@@ -16,6 +16,7 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
+import yaml
 
 import torch
 import torch.nn as nn
@@ -57,6 +58,30 @@ def normalize_device(device_str: str) -> str:
     if device_str.isdigit():
         return f"cuda:{device_str}"
     return device_str
+
+
+def load_yaml_config(path_str: str) -> dict:
+    if not path_str:
+        return {}
+    path = Path(path_str)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    if not path.exists():
+        print(f"[WARN] Config not found: {path}. Using CLI/defaults.")
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def build_run_dir(output_dir: str, name: str) -> str:
+    if not name:
+        name = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    run_dir = os.path.join(output_dir, name)
+    if os.path.exists(run_dir):
+        suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = f"{run_dir}_{suffix}"
+    os.makedirs(run_dir, exist_ok=True)
+    return run_dir
 
 
 def count_labeled_rows(csv_path: str, split: str) -> int:
@@ -187,9 +212,12 @@ def train(
     output_dir: str,
     run_name: str,
     patience: int,
+    img_size: int,
+    lr: float,
+    workers: int,
 ):
     train_tfm = transforms.Compose([
-        transforms.RandomResizedCrop(IMG_SIZE, scale=(0.6, 1.0), ratio=(0.75, 1.33)),
+        transforms.RandomResizedCrop(img_size, scale=(0.6, 1.0), ratio=(0.75, 1.33)),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomRotation(degrees=10),
         transforms.ColorJitter(
@@ -209,7 +237,7 @@ def train(
 
     val_tfm = transforms.Compose([
         transforms.Resize(256),
-        transforms.CenterCrop(IMG_SIZE),
+        transforms.CenterCrop(img_size),
         transforms.ToTensor(),
         transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
@@ -220,13 +248,25 @@ def train(
     train_ds = FridgeTypeDataset(csv_path, img_base_dir, split="train", transform=train_tfm)
     val_ds = FridgeTypeDataset(csv_path, img_base_dir, split="val", transform=val_tfm)
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=workers,
+        pin_memory=device.type == "cuda",
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=workers,
+        pin_memory=device.type == "cuda",
+    )
 
     print(f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}")
 
     model = TypeNet(num_classes=NUM_CLASSES).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
         T_max=epochs,
@@ -234,13 +274,10 @@ def train(
     )
     criterion = nn.CrossEntropyLoss()
 
-    if not run_name:
-        run_name = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    run_dir = os.path.join(output_dir, run_name)
+    run_dir = build_run_dir(output_dir, run_name)
 
     best_val_acc = -1.0
     epochs_no_improve = 0
-    os.makedirs(run_dir, exist_ok=True)
     best_path = os.path.join(run_dir, "best.pt")
     last_path = os.path.join(run_dir, "last.pt")
     log_path = os.path.join(run_dir, "train_log.csv")
@@ -465,68 +502,111 @@ def train(
 
 
 def main():
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument(
+        "--config",
+        type=str,
+        default="configs/fridge_type.yaml",
+        help="Path to YAML config",
+    )
+    pre_args, remaining = pre_parser.parse_known_args()
+    config = load_yaml_config(pre_args.config)
+
     parser = argparse.ArgumentParser(
         description="Train fridge type classifier",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        parents=[pre_parser],
     )
 
     parser.add_argument(
         "--data",
         type=str,
-        default="yolov12/data/fridge_attr10",
-        help="Base dataset directory containing images/train and images/val",
+        default=None,
+        help="Override base dataset directory containing images/train and images/val",
     )
     parser.add_argument(
         "--csv",
         type=str,
-        default="data/fridge_type_labels.csv",
-        help="CSV labels file with split/image_name/type_class",
+        default=None,
+        help="Override CSV labels file with split/image_name/type_class",
     )
     parser.add_argument(
         "--epochs",
         type=int,
-        default=50,
-        help="Number of training epochs",
+        default=None,
+        help="Override number of training epochs",
     )
     parser.add_argument(
         "--batch",
         type=int,
-        default=4,
-        help="Batch size",
+        default=None,
+        help="Override batch size",
+    )
+    parser.add_argument(
+        "--imgsz",
+        type=int,
+        default=None,
+        help="Override input image size",
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=None,
+        help="Override learning rate",
     )
     parser.add_argument(
         "--device",
         type=str,
-        default="0",
-        help="Device to use (0, 1, cpu, etc.)",
+        default=None,
+        help="Override device to use (0, 1, cpu, etc.)",
     )
     parser.add_argument(
         "--output",
         type=str,
-        default="type_runs",
-        help="Output directory for saving model checkpoints",
+        default=None,
+        help="Override output directory for saving results",
     )
     parser.add_argument(
-        "--run-name",
+        "--name",
         type=str,
-        default="",
-        help="Run subfolder name (default: auto timestamp)",
-    )
-    parser.add_argument(
-        "--patience",
-        type=int,
-        default=5,
-        help="Early stopping patience (epochs without val acc improvement)",
+        default=None,
+        help="Override run name (default: auto timestamp)",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(remaining)
 
-    data_dir = resolve_path(args.data)
-    csv_path = resolve_path(args.csv)
-    output_dir = resolve_path(args.output)
+    def pick(arg_value, key: str, default):
+        if arg_value is not None:
+            return arg_value
+        return config.get(key, default)
+
+    global NUM_CLASSES
+    global TYPE_LABELS
+    if "type_labels" in config:
+        TYPE_LABELS = {int(k): v for k, v in config["type_labels"].items()}
+    if "num_classes" in config:
+        NUM_CLASSES = int(config["num_classes"])
+    else:
+        NUM_CLASSES = len(TYPE_LABELS)
+
+    data_value = pick(args.data, "data", "data")
+    csv_value = pick(args.csv, "csv", "data/fridge_type_labels.csv")
+    epochs_value = int(pick(args.epochs, "epochs", 50))
+    batch_value = int(pick(args.batch, "batch", 4))
+    imgsz_value = int(pick(args.imgsz, "img_size", IMG_SIZE))
+    lr_value = float(pick(args.lr, "lr", LR))
+    device_value = str(pick(args.device, "device", "0"))
+    output_value = pick(args.output, "output", "runs/type")
+    name_value = pick(args.name, "name", "")
+    patience_value = int(config.get("patience", 5))
+    workers_value = int(config.get("workers", 0))
+
+    data_dir = resolve_path(data_value)
+    csv_path = resolve_path(csv_value)
+    output_dir = resolve_path(output_value)
     img_base_dir = os.path.join(data_dir, "images")
 
-    device_str = normalize_device(args.device)
+    device_str = normalize_device(device_value)
     device = torch.device(device_str if torch.cuda.is_available() else "cpu")
 
     print("=" * 50)
@@ -534,10 +614,13 @@ def main():
     print("=" * 50)
     print(f"Data Dir: {data_dir}")
     print(f"CSV     : {csv_path}")
-    print(f"Epochs  : {args.epochs}")
-    print(f"Batch   : {args.batch}")
+    print(f"Epochs  : {epochs_value}")
+    print(f"Batch   : {batch_value}")
+    print(f"ImgSize : {imgsz_value}")
+    print(f"LR      : {lr_value}")
     print(f"Device  : {device}")
     print(f"Output  : {output_dir}")
+    print(f"Name    : {name_value or '(auto)'}")
     print("=" * 50)
 
     print("\nType classes:")
@@ -553,12 +636,15 @@ def main():
     train(
         csv_path=csv_path,
         img_base_dir=img_base_dir,
-        epochs=args.epochs,
-        batch_size=args.batch,
+        epochs=epochs_value,
+        batch_size=batch_value,
         device=device,
         output_dir=output_dir,
-        run_name=args.run_name,
-        patience=args.patience,
+        run_name=name_value,
+        patience=patience_value,
+        img_size=imgsz_value,
+        lr=lr_value,
+        workers=workers_value,
     )
 
 

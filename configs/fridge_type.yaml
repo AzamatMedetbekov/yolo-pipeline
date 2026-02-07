@@ -22,3 +22,23 @@ workers: 0
 
 output: runs/type
 name: train
+
+augmentations:
+  train:
+    random_resized_crop:
+      scale: [0.6, 1.0]
+      ratio: [0.75, 1.33]
+    horizontal_flip: 0.5
+    rotation: 10
+    color_jitter:
+      brightness: 0.2
+      contrast: 0.2
+      saturation: 0.15
+      hue: 0.02
+    random_grayscale: 0.05
+    random_perspective:
+      distortion_scale: 0.1
+      p: 0.2
+  val:
+    resize: 256
+    center_crop: 224

@@ -13,6 +13,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+import yaml
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -186,6 +187,19 @@ def main():
     if not Path(data_path).exists():
         data_path = str(PROJECT_ROOT / args.data)
 
+    data_yaml = Path(data_path)
+    if not data_yaml.exists():
+        print(f"[ERROR] Dataset config not found: {data_path}")
+        sys.exit(1)
+
+    with open(data_yaml, "r", encoding="utf-8") as f:
+        data_cfg = yaml.safe_load(f) or {}
+
+    augmentations = data_cfg.get("augmentations", {})
+    if not isinstance(augmentations, dict):
+        print("[WARN] augmentations in YAML must be a mapping; ignoring.")
+        augmentations = {}
+
     # Start training
     print("\n[INFO] Starting training...")
     try:
@@ -201,18 +215,7 @@ def main():
             resume=args.resume,
             amp=args.amp,
             workers=args.workers,
-
-            # ========== Augmentation (aggressive for small dataset) ==========
-            # Geometric augmentations
-            degrees=15.0,       # Rotate image (+/- 15 degrees)
-            translate=0.2,      # Translate image (+/- 20%)
-            scale=0.5,          # Scale image (+/- 50%)
-            shear=5.0,          # Shear angle (+/- 5 degrees)
-            perspective=0.001,  # Perspective distortion
-            flipud=0.0,         # Flip up-down (0 for fridges - usually upright)
-            fliplr=0.5,         # Flip left-right (50% probability
-            hsv_s=0.7,          # Saturation shift (+/- 70%)
-            hsv_v=0.4,          # Value/brightness shift (+/- 40%)
+            **augmentations,
         )
 
         print("\n" + "=" * 50)

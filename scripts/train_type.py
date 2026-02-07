@@ -20,6 +20,7 @@ import yaml
 
 import torch
 import torch.nn as nn
+import torch.cuda.amp as amp
 from torch.utils.data import Dataset, DataLoader
 from torchvision import models, transforms
 from PIL import Image
@@ -82,6 +83,94 @@ def build_run_dir(output_dir: str, name: str) -> str:
         run_dir = f"{run_dir}_{suffix}"
     os.makedirs(run_dir, exist_ok=True)
     return run_dir
+
+
+def _parse_range(value, default):
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        try:
+            return float(value[0]), float(value[1])
+        except (TypeError, ValueError):
+            return default
+    return default
+
+
+def build_transforms(augmentations: dict, img_size: int):
+    defaults = {
+        "random_resized_crop": {"scale": (0.6, 1.0), "ratio": (0.75, 1.33)},
+        "horizontal_flip": 0.5,
+        "rotation": 10,
+        "color_jitter": {
+            "brightness": 0.2,
+            "contrast": 0.2,
+            "saturation": 0.15,
+            "hue": 0.02,
+        },
+        "random_grayscale": 0.05,
+        "random_perspective": {"distortion_scale": 0.1, "p": 0.2},
+        "val": {"resize": 256, "center_crop": img_size},
+    }
+    aug = augmentations if isinstance(augmentations, dict) else {}
+    train_cfg = aug.get("train", {}) if isinstance(aug.get("train", {}), dict) else {}
+    val_cfg = aug.get("val", {}) if isinstance(aug.get("val", {}), dict) else {}
+
+    crop_cfg = train_cfg.get("random_resized_crop", {})
+    crop_scale = _parse_range(crop_cfg.get("scale"), defaults["random_resized_crop"]["scale"])
+    crop_ratio = _parse_range(crop_cfg.get("ratio"), defaults["random_resized_crop"]["ratio"])
+
+    flip_p = float(train_cfg.get("horizontal_flip", defaults["horizontal_flip"]))
+    rotation = float(train_cfg.get("rotation", defaults["rotation"]))
+
+    cj_cfg = train_cfg.get("color_jitter", {})
+    if not isinstance(cj_cfg, dict):
+        cj_cfg = {}
+    cj_defaults = defaults["color_jitter"]
+    brightness = float(cj_cfg.get("brightness", cj_defaults["brightness"]))
+    contrast = float(cj_cfg.get("contrast", cj_defaults["contrast"]))
+    saturation = float(cj_cfg.get("saturation", cj_defaults["saturation"]))
+    hue = float(cj_cfg.get("hue", cj_defaults["hue"]))
+
+    gray_p = float(train_cfg.get("random_grayscale", defaults["random_grayscale"]))
+
+    persp_cfg = train_cfg.get("random_perspective", {})
+    if not isinstance(persp_cfg, dict):
+        persp_cfg = {}
+    persp_defaults = defaults["random_perspective"]
+    distortion_scale = float(persp_cfg.get("distortion_scale", persp_defaults["distortion_scale"]))
+    persp_p = float(persp_cfg.get("p", persp_defaults["p"]))
+
+    val_resize = int(val_cfg.get("resize", defaults["val"]["resize"]))
+    val_center_crop = int(val_cfg.get("center_crop", defaults["val"]["center_crop"]))
+
+    train_tfm = transforms.Compose([
+        transforms.RandomResizedCrop(img_size, scale=crop_scale, ratio=crop_ratio),
+        transforms.RandomHorizontalFlip(p=flip_p),
+        transforms.RandomRotation(degrees=rotation),
+        transforms.ColorJitter(
+            brightness=brightness,
+            contrast=contrast,
+            saturation=saturation,
+            hue=hue,
+        ),
+        transforms.RandomGrayscale(p=gray_p),
+        transforms.RandomPerspective(distortion_scale=distortion_scale, p=persp_p),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        ),
+    ])
+
+    val_tfm = transforms.Compose([
+        transforms.Resize(val_resize),
+        transforms.CenterCrop(val_center_crop),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        ),
+    ])
+
+    return train_tfm, val_tfm
 
 
 def count_labeled_rows(csv_path: str, split: str) -> int:
@@ -215,35 +304,10 @@ def train(
     img_size: int,
     lr: float,
     workers: int,
+    use_amp: bool,
+    augmentations: dict,
 ):
-    train_tfm = transforms.Compose([
-        transforms.RandomResizedCrop(img_size, scale=(0.6, 1.0), ratio=(0.75, 1.33)),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomRotation(degrees=10),
-        transforms.ColorJitter(
-            brightness=0.2,
-            contrast=0.2,
-            saturation=0.15,
-            hue=0.02,
-        ),
-        transforms.RandomGrayscale(p=0.05),
-        transforms.RandomPerspective(distortion_scale=0.1, p=0.2),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225],
-        ),
-    ])
-
-    val_tfm = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(img_size),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225],
-        ),
-    ])
+    train_tfm, val_tfm = build_transforms(augmentations, img_size)
 
     train_ds = FridgeTypeDataset(csv_path, img_base_dir, split="train", transform=train_tfm)
     val_ds = FridgeTypeDataset(csv_path, img_base_dir, split="val", transform=val_tfm)
@@ -267,12 +331,19 @@ def train(
 
     model = TypeNet(num_classes=NUM_CLASSES).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    steps_per_epoch = len(train_loader)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
-        T_max=epochs,
-        eta_min=1e-6,
+        max_lr=lr,
+        steps_per_epoch=steps_per_epoch,
+        epochs=epochs,
+        pct_start=0.3,
+        div_factor=25.0,
+        final_div_factor=1000.0,
     )
     criterion = nn.CrossEntropyLoss()
+    amp_enabled = use_amp and device.type == "cuda"
+    scaler = amp.GradScaler(enabled=amp_enabled)
 
     run_dir = build_run_dir(output_dir, run_name)
 
@@ -330,10 +401,24 @@ def train(
             labels = labels.to(device)
 
             optimizer.zero_grad()
-            logits = model(imgs)
-            loss = criterion(logits, labels)
-            loss.backward()
-            optimizer.step()
+            device_type = "cuda" if device.type == "cuda" else "cpu"
+            with torch.autocast(
+                device_type=device_type,
+                dtype=torch.float16,
+                enabled=amp_enabled,
+            ):
+                logits = model(imgs)
+                loss = criterion(logits, labels)
+
+            if amp_enabled:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
+
+            scheduler.step()
 
             train_loss_sum += loss.item() * imgs.size(0)
             preds = logits.argmax(dim=1)
@@ -394,7 +479,6 @@ def train(
             per_class_f1[valid_rec].mean().item() if valid_rec.any() else 0.0
         )
 
-        scheduler.step()
         epoch_sec = time.perf_counter() - epoch_start
         lr = scheduler.get_last_lr()[0]
 
@@ -555,6 +639,12 @@ def main():
         help="Override learning rate",
     )
     parser.add_argument(
+        "--amp",
+        action="store_true",
+        default=None,
+        help="Enable automatic mixed precision (CUDA only)",
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default=None,
@@ -598,8 +688,10 @@ def main():
     device_value = str(pick(args.device, "device", "0"))
     output_value = pick(args.output, "output", "runs/type")
     name_value = pick(args.name, "name", "")
+    amp_value = bool(pick(args.amp, "amp", False))
     patience_value = int(config.get("patience", 5))
     workers_value = int(config.get("workers", 0))
+    augmentations_value = config.get("augmentations", {})
 
     data_dir = resolve_path(data_value)
     csv_path = resolve_path(csv_value)
@@ -618,6 +710,7 @@ def main():
     print(f"Batch   : {batch_value}")
     print(f"ImgSize : {imgsz_value}")
     print(f"LR      : {lr_value}")
+    print(f"AMP     : {amp_value}")
     print(f"Device  : {device}")
     print(f"Output  : {output_dir}")
     print(f"Name    : {name_value or '(auto)'}")
@@ -645,6 +738,8 @@ def main():
         img_size=imgsz_value,
         lr=lr_value,
         workers=workers_value,
+        use_amp=amp_value,
+        augmentations=augmentations_value,
     )
 
 

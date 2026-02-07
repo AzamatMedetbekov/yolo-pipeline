@@ -454,7 +454,11 @@ def train(
         val_total = 0
 
         confusion = torch.zeros(NUM_CLASSES, NUM_CLASSES, dtype=torch.int64)
-        with torch.no_grad():
+        with torch.no_grad(), torch.autocast(
+                device_type=device_type,
+                dtype=torch.float16,
+                enabled=amp_enabled,
+            ):
             for imgs, labels in val_loader:
                 imgs = imgs.to(device)
                 labels = labels.to(device)
@@ -606,6 +610,8 @@ def train(
 
 
 def main():
+    set_seed(42)
+
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument(
         "--config",

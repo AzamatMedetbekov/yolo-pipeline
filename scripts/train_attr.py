@@ -420,6 +420,7 @@ def train(
         num_workers=workers,
         pin_memory=device.type == "cuda",
         collate_fn = filter_bad_images,
+        persistent_workers=(workers > 0),
     )
     val_loader = DataLoader(
         val_ds,
@@ -428,6 +429,7 @@ def train(
         num_workers=workers,
         pin_memory=device.type == "cuda",
         collate_fn = filter_bad_images,
+        persistent_workers=(workers > 0),
     )
 
     model = AttrNet(REG_ATTRS, CLS_ATTRS).to(device)
@@ -469,7 +471,6 @@ def train(
         pct_start=0.3,
         div_factor=25.0,
         final_div_factor=1000.0,
-        persistent_workers=(workers > 0),
     )
 
     cls_crits = {name: nn.CrossEntropyLoss(ignore_index=-1).to(device) for name in CLS_ATTRS}

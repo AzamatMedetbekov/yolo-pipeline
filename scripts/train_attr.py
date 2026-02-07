@@ -16,6 +16,8 @@ from torchvision import models, transforms
 from PIL import Image
 import torch.nn.functional as F
 import torch.cuda.amp as amp
+import random
+import numpy as np
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -48,6 +50,14 @@ CLS_ATTRS: Dict[str, int] = {
 
 IMG_SIZE = 224
 LR = 1e-3
+
+def set_seed(seed = 42):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def resolve_path(path_str: str) -> str:
@@ -537,6 +547,10 @@ def train(
                 loss = (w_reg * loss_reg_sum) + (w_cls * loss_cls_sum)
 
             scaler.scale(loss).backward()
+
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+
             scaler.step(optimizer)
             scaler.update()
 
@@ -651,7 +665,7 @@ def train(
                 {
                     "epoch": epoch,
                     "model_state": model.state_dict(),
-                    "optimizer_state": optimizer.state_dict(),
+                   #"optimizer_state": optimizer.state_dict(), removed because we do not need the training trace for the best one
                     "reg_attrs": REG_ATTRS,
                     "cls_attrs": CLS_ATTRS,
                     "stats_means": train_means,
@@ -712,6 +726,9 @@ def train(
 
 
 def main():
+
+    set_seed(42)
+
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument(
         "--config",

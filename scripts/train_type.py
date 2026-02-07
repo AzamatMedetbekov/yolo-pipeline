@@ -264,7 +264,13 @@ class FridgeTypeDataset(Dataset):
     def __getitem__(self, idx):
         r = self.rows[idx]
         img_path = os.path.join(self.img_base_dir, r["split"], r["image_name"])
-        img = Image.open(img_path).convert("RGB")
+        
+        try:
+            img = Image.open(img_path).convert("RGB")
+        except Exception as e:
+            print(f"[WARNING] Failed to load {img_path}: {e}. Using placeholder.")
+            # dummy image
+            img = Image.new('RGB', (224, 224), color=(128, 128, 128))
 
         if self.transform:
             img = self.transform(img)
@@ -327,6 +333,7 @@ def train(
         shuffle=True,
         num_workers=workers,
         pin_memory=device.type == "cuda",
+        persistent_workers=workers > 0,
     )
     val_loader = DataLoader(
         val_ds,
@@ -334,6 +341,7 @@ def train(
         shuffle=False,
         num_workers=workers,
         pin_memory=device.type == "cuda",
+        persistent_workers=workers > 0,
     )
 
     print(f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}")
@@ -421,10 +429,13 @@ def train(
 
             if amp_enabled:
                 scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 scaler.step(optimizer)
                 scaler.update()
             else:
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
 
             scheduler.step()

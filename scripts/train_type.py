@@ -85,6 +85,94 @@ def build_run_dir(output_dir: str, name: str) -> str:
     return run_dir
 
 
+def _parse_range(value, default):
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        try:
+            return float(value[0]), float(value[1])
+        except (TypeError, ValueError):
+            return default
+    return default
+
+
+def build_transforms(augmentations: dict, img_size: int):
+    defaults = {
+        "random_resized_crop": {"scale": (0.6, 1.0), "ratio": (0.75, 1.33)},
+        "horizontal_flip": 0.5,
+        "rotation": 10,
+        "color_jitter": {
+            "brightness": 0.2,
+            "contrast": 0.2,
+            "saturation": 0.15,
+            "hue": 0.02,
+        },
+        "random_grayscale": 0.05,
+        "random_perspective": {"distortion_scale": 0.1, "p": 0.2},
+        "val": {"resize": 256, "center_crop": img_size},
+    }
+    aug = augmentations if isinstance(augmentations, dict) else {}
+    train_cfg = aug.get("train", {}) if isinstance(aug.get("train", {}), dict) else {}
+    val_cfg = aug.get("val", {}) if isinstance(aug.get("val", {}), dict) else {}
+
+    crop_cfg = train_cfg.get("random_resized_crop", {})
+    crop_scale = _parse_range(crop_cfg.get("scale"), defaults["random_resized_crop"]["scale"])
+    crop_ratio = _parse_range(crop_cfg.get("ratio"), defaults["random_resized_crop"]["ratio"])
+
+    flip_p = float(train_cfg.get("horizontal_flip", defaults["horizontal_flip"]))
+    rotation = float(train_cfg.get("rotation", defaults["rotation"]))
+
+    cj_cfg = train_cfg.get("color_jitter", {})
+    if not isinstance(cj_cfg, dict):
+        cj_cfg = {}
+    cj_defaults = defaults["color_jitter"]
+    brightness = float(cj_cfg.get("brightness", cj_defaults["brightness"]))
+    contrast = float(cj_cfg.get("contrast", cj_defaults["contrast"]))
+    saturation = float(cj_cfg.get("saturation", cj_defaults["saturation"]))
+    hue = float(cj_cfg.get("hue", cj_defaults["hue"]))
+
+    gray_p = float(train_cfg.get("random_grayscale", defaults["random_grayscale"]))
+
+    persp_cfg = train_cfg.get("random_perspective", {})
+    if not isinstance(persp_cfg, dict):
+        persp_cfg = {}
+    persp_defaults = defaults["random_perspective"]
+    distortion_scale = float(persp_cfg.get("distortion_scale", persp_defaults["distortion_scale"]))
+    persp_p = float(persp_cfg.get("p", persp_defaults["p"]))
+
+    val_resize = int(val_cfg.get("resize", defaults["val"]["resize"]))
+    val_center_crop = int(val_cfg.get("center_crop", defaults["val"]["center_crop"]))
+
+    train_tfm = transforms.Compose([
+        transforms.RandomResizedCrop(img_size, scale=crop_scale, ratio=crop_ratio),
+        transforms.RandomHorizontalFlip(p=flip_p),
+        transforms.RandomRotation(degrees=rotation),
+        transforms.ColorJitter(
+            brightness=brightness,
+            contrast=contrast,
+            saturation=saturation,
+            hue=hue,
+        ),
+        transforms.RandomGrayscale(p=gray_p),
+        transforms.RandomPerspective(distortion_scale=distortion_scale, p=persp_p),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        ),
+    ])
+
+    val_tfm = transforms.Compose([
+        transforms.Resize(val_resize),
+        transforms.CenterCrop(val_center_crop),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        ),
+    ])
+
+    return train_tfm, val_tfm
+
+
 def count_labeled_rows(csv_path: str, split: str) -> int:
     count = 0
     with open(csv_path, "r", encoding="utf-8") as f:
@@ -217,35 +305,9 @@ def train(
     lr: float,
     workers: int,
     use_amp: bool,
+    augmentations: dict,
 ):
-    train_tfm = transforms.Compose([
-        transforms.RandomResizedCrop(img_size, scale=(0.6, 1.0), ratio=(0.75, 1.33)),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomRotation(degrees=10),
-        transforms.ColorJitter(
-            brightness=0.2,
-            contrast=0.2,
-            saturation=0.15,
-            hue=0.02,
-        ),
-        transforms.RandomGrayscale(p=0.05),
-        transforms.RandomPerspective(distortion_scale=0.1, p=0.2),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225],
-        ),
-    ])
-
-    val_tfm = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(img_size),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225],
-        ),
-    ])
+    train_tfm, val_tfm = build_transforms(augmentations, img_size)
 
     train_ds = FridgeTypeDataset(csv_path, img_base_dir, split="train", transform=train_tfm)
     val_ds = FridgeTypeDataset(csv_path, img_base_dir, split="val", transform=val_tfm)
@@ -623,6 +685,7 @@ def main():
     amp_value = bool(pick(args.amp, "amp", False))
     patience_value = int(config.get("patience", 5))
     workers_value = int(config.get("workers", 0))
+    augmentations_value = config.get("augmentations", {})
 
     data_dir = resolve_path(data_value)
     csv_path = resolve_path(csv_value)
@@ -670,6 +733,7 @@ def main():
         lr=lr_value,
         workers=workers_value,
         use_amp=amp_value,
+        augmentations=augmentations_value,
     )
 
 

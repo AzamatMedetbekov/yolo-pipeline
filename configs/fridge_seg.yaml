@@ -14,3 +14,15 @@ names:
 
 # Number of classes
 nc: 1
+
+# Training augmentations (Ultralytics-compatible)
+augmentations:
+  degrees: 15.0
+  translate: 0.2
+  scale: 0.5
+  shear: 5.0
+  perspective: 0.001
+  flipud: 0.0
+  fliplr: 0.5
+  hsv_s: 0.7
+  hsv_v: 0.4

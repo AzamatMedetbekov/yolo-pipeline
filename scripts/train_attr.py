@@ -408,7 +408,20 @@ def train(
     )
 
     model = AttrNet(REG_ATTRS, CLS_ATTRS).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-2)
+
+    backbone_parameters = list(model.backbone.parameters())
+
+    head_parameters = []
+    if model.reg_head is not None:
+        head_parameters.extend(model.reg_head.parameters())
+    if len(model.cls_head) > 0:
+        head_parameters.extend(model.cls_head.parameters())
+
+    # slower learning rate for ResNet, because it is pretrained
+    optimizer = torch.optim.AdamW([
+        {backbone_parameters, lr*0.1},
+        {head_parameters, lr},
+    ], weight_decay=1e-2)
 
     print("Using device:", device)
 
@@ -427,7 +440,7 @@ def train(
     steps_per_epoch = len(train_loader)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
-        max_lr=lr,
+        max_lr = [lr*0.1, lr],
         steps_per_epoch=steps_per_epoch,
         epochs=epochs,
         pct_start=0.3,

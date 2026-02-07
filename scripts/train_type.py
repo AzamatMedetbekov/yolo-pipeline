@@ -20,6 +20,7 @@ import yaml
 
 import torch
 import torch.nn as nn
+import torch.cuda.amp as amp
 from torch.utils.data import Dataset, DataLoader
 from torchvision import models, transforms
 from PIL import Image
@@ -215,6 +216,7 @@ def train(
     img_size: int,
     lr: float,
     workers: int,
+    use_amp: bool,
 ):
     train_tfm = transforms.Compose([
         transforms.RandomResizedCrop(img_size, scale=(0.6, 1.0), ratio=(0.75, 1.33)),
@@ -273,6 +275,8 @@ def train(
         eta_min=1e-6,
     )
     criterion = nn.CrossEntropyLoss()
+    amp_enabled = use_amp and device.type == "cuda"
+    scaler = amp.GradScaler(enabled=amp_enabled)
 
     run_dir = build_run_dir(output_dir, run_name)
 
@@ -330,10 +334,22 @@ def train(
             labels = labels.to(device)
 
             optimizer.zero_grad()
-            logits = model(imgs)
-            loss = criterion(logits, labels)
-            loss.backward()
-            optimizer.step()
+            device_type = "cuda" if device.type == "cuda" else "cpu"
+            with torch.autocast(
+                device_type=device_type,
+                dtype=torch.float16,
+                enabled=amp_enabled,
+            ):
+                logits = model(imgs)
+                loss = criterion(logits, labels)
+
+            if amp_enabled:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
 
             train_loss_sum += loss.item() * imgs.size(0)
             preds = logits.argmax(dim=1)
@@ -555,6 +571,12 @@ def main():
         help="Override learning rate",
     )
     parser.add_argument(
+        "--amp",
+        action="store_true",
+        default=None,
+        help="Enable automatic mixed precision (CUDA only)",
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default=None,
@@ -598,6 +620,7 @@ def main():
     device_value = str(pick(args.device, "device", "0"))
     output_value = pick(args.output, "output", "runs/type")
     name_value = pick(args.name, "name", "")
+    amp_value = bool(pick(args.amp, "amp", False))
     patience_value = int(config.get("patience", 5))
     workers_value = int(config.get("workers", 0))
 
@@ -618,6 +641,7 @@ def main():
     print(f"Batch   : {batch_value}")
     print(f"ImgSize : {imgsz_value}")
     print(f"LR      : {lr_value}")
+    print(f"AMP     : {amp_value}")
     print(f"Device  : {device}")
     print(f"Output  : {output_dir}")
     print(f"Name    : {name_value or '(auto)'}")
@@ -645,6 +669,7 @@ def main():
         img_size=imgsz_value,
         lr=lr_value,
         workers=workers_value,
+        use_amp=amp_value,
     )
 
 

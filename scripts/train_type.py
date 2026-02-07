@@ -331,10 +331,15 @@ def train(
 
     model = TypeNet(num_classes=NUM_CLASSES).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    steps_per_epoch = len(train_loader)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
-        T_max=epochs,
-        eta_min=1e-6,
+        max_lr=lr,
+        steps_per_epoch=steps_per_epoch,
+        epochs=epochs,
+        pct_start=0.3,
+        div_factor=25.0,
+        final_div_factor=1000.0,
     )
     criterion = nn.CrossEntropyLoss()
     amp_enabled = use_amp and device.type == "cuda"
@@ -413,6 +418,8 @@ def train(
                 loss.backward()
                 optimizer.step()
 
+            scheduler.step()
+
             train_loss_sum += loss.item() * imgs.size(0)
             preds = logits.argmax(dim=1)
             train_correct += (preds == labels).sum().item()
@@ -472,7 +479,6 @@ def train(
             per_class_f1[valid_rec].mean().item() if valid_rec.any() else 0.0
         )
 
-        scheduler.step()
         epoch_sec = time.perf_counter() - epoch_start
         lr = scheduler.get_last_lr()[0]
 

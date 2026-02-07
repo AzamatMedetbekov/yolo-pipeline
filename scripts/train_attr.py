@@ -228,7 +228,13 @@ class FridgeAttrDataset(Dataset):
     def __getitem__(self, idx):
         r = self.rows[idx]
         img_path = os.path.join(self.img_base_dir, r["split"], r["image_name"])
-        img = Image.open(img_path).convert("RGB")
+        
+        try:
+            img = Image.open(img_path).convert("RGB")
+        except Exception as e:
+            print(f"[WARNING] Failed to load {img_path}: {e}. Using placeholder.")
+            # dummy image
+            img = Image.new('RGB', (224, 224), color=(128, 128, 128))
 
         if self.transform:
             img = self.transform(img)
@@ -324,6 +330,11 @@ class AttrNet(nn.Module):
 # Training Loop
 # ============================
 
+def filter_bad_images(batch):
+    batch = [item for item in batch if item is not None]
+    if len(batch) == 0:
+        return None 
+    return torch.utils.data.dataloader.default_collate(batch)
 
 def print_loss_table(title, names, train_losses, val_losses):
     print(f"\n[{title}]")
@@ -408,6 +419,7 @@ def train(
         shuffle=True,
         num_workers=workers,
         pin_memory=device.type == "cuda",
+        collate_fn = filter_bad_images,
     )
     val_loader = DataLoader(
         val_ds,
@@ -415,6 +427,7 @@ def train(
         shuffle=False,
         num_workers=workers,
         pin_memory=device.type == "cuda",
+        collate_fn = filter_bad_images,
     )
 
     model = AttrNet(REG_ATTRS, CLS_ATTRS).to(device)
@@ -424,13 +437,13 @@ def train(
     head_parameters = []
     if model.reg_head is not None:
         head_parameters.extend(model.reg_head.parameters())
-    if len(model.cls_head) > 0:
-        head_parameters.extend(model.cls_head.parameters())
+    if len(model.cls_heads) > 0:
+        head_parameters.extend(model.cls_heads.parameters())
 
     # slower learning rate for ResNet, because it is pretrained
     optimizer = torch.optim.AdamW([
-        {backbone_parameters, lr*0.1},
-        {head_parameters, lr},
+        {'params': backbone_parameters, 'lr': lr*0.1},
+        {'params': head_parameters, 'lr': lr},
     ], weight_decay=1e-2)
 
     print("Using device:", device)
@@ -542,7 +555,7 @@ def train(
 
                         train_cls_sums[name] += loss_j.item() * bs
 
-                    loss_cls_sum = cls_losses_accumulated / num_cls_heads
+                    loss_cls_sum = cls_losses_accumulated
 
                 loss = (w_reg * loss_reg_sum) + (w_cls * loss_cls_sum)
 
@@ -570,7 +583,11 @@ def train(
         val_reg_sums = {name: 0.0 for name in REG_ATTRS}
         val_cls_sums = {name: 0.0 for name in CLS_ATTRS.keys()}
 
-        with torch.no_grad():
+        with torch.no_grad(), torch.autocast(
+                device_type=device_type,
+                dtype=torch.float16,
+                enabled=(device.type == "cuda"),
+            ):
             for imgs, y_reg, mask_reg, y_cls in val_loader:
                 imgs, y_reg, mask_reg = (
                     imgs.to(device),
@@ -618,7 +635,7 @@ def train(
 
                         val_cls_sums[name] += loss_j.item() * bs
 
-                    loss_cls_sum = loss_cls_accumulated / num_cls_heads
+                    loss_cls_sum = loss_cls_accumulated
                     loss = loss + (loss_cls_sum * w_cls)
 
                 val_total_sum += loss.item() * bs

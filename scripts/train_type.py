@@ -17,6 +17,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 import yaml
+import random
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -45,6 +47,13 @@ TYPE_LABELS = {
 IMG_SIZE = 224
 LR = 1e-3
 
+def set_seed(seed = 42):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 def resolve_path(path_str: str) -> str:
     path = Path(path_str)

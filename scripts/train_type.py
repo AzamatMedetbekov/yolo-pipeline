@@ -276,6 +276,11 @@ class FridgeTypeDataset(Dataset):
             img = self.transform(img)
 
         type_class = int(r["type_class"])
+        if type_class < 0 or type_class >= NUM_CLASSES:
+            raise ValueError(
+                f"Invalid type_class={type_class} in {r['image_name']}. "
+                f"Must be in range [0, {NUM_CLASSES-1}]"
+            )
         y = torch.tensor(type_class, dtype=torch.long)
 
         return img, y

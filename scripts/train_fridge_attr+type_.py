@@ -1,18 +1,4 @@
 #!/usr/bin/env python3
-"""
-Unified Fridge Training Script
-
-Supports three modes:
-- attr: Train attribute prediction (regression + classification attributes)
-- type: Train type classification
-- both: Multi-task learning with all tasks
-
-Features:
-- Reproducible training with seed setting
-- Gradient clipping and mixed precision
-- Comprehensive validation and error handling
-- Mode-aware training and metrics
-"""
 
 import argparse
 import csv
@@ -980,3 +966,13 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+# Train only attributes
+# python train_fridge.py --mode attr --data ./data --csv data/labels.csv --epochs 100
+
+# # Train only type
+# python train_fridge.py --mode type --data ./data --csv data/labels.csv --epochs 50
+
+# # Train both (multi-task)
+# python train_fridge.py --mode both --data ./data --csv data/labels.csv \
+#   --epochs 100 --w-reg 1.0 --w-cls-attr 1.0 --w-type 2.0

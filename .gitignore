@@ -57,5 +57,8 @@ CLAUDE.md
 .claude
 AGENTS.md
 
+*.jpg
+*.png
+*.pdf
 pdfs/
 pdf_images/

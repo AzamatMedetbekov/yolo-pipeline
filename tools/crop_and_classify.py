@@ -18,14 +18,16 @@ Classes:
 6) coldroom          (walk-in/panelized room)
 """
 
+import argparse
 import glob
 import os
+from pathlib import Path
 from PIL import Image, ImageTk
 import tkinter as tk
 
 # --- CONFIG ---
-SRC_DIR = r"C:\\Users\\Amin Stors\\Desktop\\3rd-semester\\internship\\yolo-pipeline\\data\\pdf_images"   # folder containing page images
-OUT_DIR = r"C:\\Users\\Amin Stors\\Desktop\\3rd-semester\\internship\\yolo-pipeline\\data\\dataset"      # root folder where class subfolders will be created
+DEFAULT_SRC = Path("data/pdf_images")
+DEFAULT_OUT = Path("data/dataset")
 CLASSES = [
     "vertical_closed",
     "vertical_open",
@@ -37,15 +39,27 @@ CLASSES = [
 CANVAS_W, CANVAS_H = 1200, 900
 ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Manual crop-and-classify GUI")
+    parser.add_argument("--src", type=Path, default=DEFAULT_SRC, help="Folder with page images")
+    parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="Output root folder for class subfolders")
+    return parser.parse_args()
+
+
+args = parse_args()
+SRC_DIR = args.src
+OUT_DIR = args.out
+
 # ensure output folders exist
-os.makedirs(OUT_DIR, exist_ok=True)
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 for c in CLASSES:
-    os.makedirs(os.path.join(OUT_DIR, c), exist_ok=True)
+    (OUT_DIR / c).mkdir(parents=True, exist_ok=True)
 
 # gather images
 images = [
-    p for p in sorted(glob.glob(os.path.join(SRC_DIR, "*")))
-    if os.path.splitext(p)[1].lower() in ALLOWED_EXTS
+    p for p in sorted(SRC_DIR.glob("*"))
+    if p.suffix.lower() in ALLOWED_EXTS
 ]
 
 idx = 0
@@ -183,8 +197,8 @@ nav_prev.grid(row=0, column=6, padx=2, pady=2, sticky="ew")
 nav_next = tk.Button(top_bar, text="Next", command=go_next)
 nav_next.grid(row=0, column=7, padx=2, pady=2, sticky="ew")
 
-root.bind("<ButtonPress-1>", on_down)
-root.bind("<B1-Motion>", on_drag)
+canvas.bind("<ButtonPress-1>", on_down)
+canvas.bind("<B1-Motion>", on_drag)
 root.bind("<Left>", go_prev)
 root.bind("<Right>", go_next)
 root.bind("<Key>", on_digit)
